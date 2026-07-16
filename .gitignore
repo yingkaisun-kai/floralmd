@@ -1,0 +1,36 @@
+# AI
+.claude/worktrees/
+.claude/settings.json
+.claude/settings.local.json
+.codex/config.toml
+
+# local tooling
+.worktrees/
+Tests/FloralMDTests/_RenderDump.swift
+Tests/FloralMDTests/_RenderEdit.swift
+
+# local files
+/test-files/
+/misc/
+/tmp/
+/dev-notes/
+
+# dev stuff
+.build/
+build/
+Packages/
+xcuserdata/
+DerivedData/
+__pycache__/
+*.py[cod]
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Sparkle private key
+sparkle_private_key.txt
+floralmd_sparkle_private_key.txt
+.secrets/
+
+# system
+.DS_Store
+.netrc

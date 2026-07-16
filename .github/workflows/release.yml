@@ -1,0 +1,187 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: floralmd-release-feed
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Require feed branch
+        run: |
+          if ! git ls-remote --exit-code origin refs/heads/feed >/dev/null; then
+            echo "The orphan feed branch must be created before the first release." >&2
+            exit 1
+          fi
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Toolchain version
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v5
+        with:
+          path: .build
+          key: spm-v3-macos26-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-v3-macos26-${{ runner.os }}-
+
+      - name: Test
+        run: |
+          python3 -m unittest discover -s scripts/tests
+          swift test
+
+      - name: Validate version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Info.plist)"
+          BUILD="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' Info.plist)"
+          VALIDATE_ARGS=(
+            --version "$APP_VERSION"
+            --tag "$GITHUB_REF_NAME"
+            --build "$BUILD"
+          )
+          if git cat-file -e HEAD^:Info.plist 2>/dev/null; then
+            PREVIOUS_VERSION="$(git show HEAD^:Info.plist | plutil -extract CFBundleShortVersionString raw -o - -)"
+            PREVIOUS_BUILD="$(git show HEAD^:Info.plist | plutil -extract CFBundleVersion raw -o - -)"
+            VALIDATE_ARGS+=(--previous-version "$PREVIOUS_VERSION" --previous-build "$PREVIOUS_BUILD")
+          fi
+          python3 scripts/validate-release-version.py "${VALIDATE_ARGS[@]}"
+          echo "VERSION=$TAG_VERSION" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+
+      - name: Build app bundle
+        run: ./scripts/build-app.sh --variant production
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install DMG packager
+        run: npm install --global create-dmg
+
+      - name: Package and verify
+        run: |
+          create-dmg build/FloralMD.app build/ || true
+          DMG_SRC="$(find build -maxdepth 1 -name 'FloralMD*.dmg' -print -quit)"
+          if [ -z "$DMG_SRC" ]; then
+            echo "create-dmg produced no DMG." >&2
+            exit 1
+          fi
+
+          DMG="build/FloralMD-${VERSION}.dmg"
+          if [ "$DMG_SRC" != "$DMG" ]; then
+            mv "$DMG_SRC" "$DMG"
+          fi
+
+          hdiutil verify "$DMG"
+          (cd build && shasum -a 256 "FloralMD-${VERSION}.dmg" > "FloralMD-${VERSION}.sha256")
+
+      - name: Sign update for Sparkle
+        env:
+          FLORALMD_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.FLORALMD_SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -z "$FLORALMD_SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "FLORALMD_SPARKLE_ED_PRIVATE_KEY is not configured." >&2
+            exit 1
+          fi
+
+          SIGN_UPDATE="$(find .build -name sign_update -type f -print -quit)"
+          if [ -z "$SIGN_UPDATE" ]; then
+            echo "Sparkle sign_update was not found." >&2
+            exit 1
+          fi
+
+          SIG_OUTPUT="$(printf '%s' "$FLORALMD_SPARKLE_ED_PRIVATE_KEY" | \
+            "$SIGN_UPDATE" --ed-key-file - "build/FloralMD-${VERSION}.dmg")"
+          ED_SIGNATURE="$(printf '%s\n' "$SIG_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"
+          FILE_LENGTH="$(printf '%s\n' "$SIG_OUTPUT" | sed -n 's/.*length="\([0-9]*\)".*/\1/p')"
+          if [ -z "$ED_SIGNATURE" ] || [ -z "$FILE_LENGTH" ]; then
+            echo "Could not parse Sparkle signature output." >&2
+            exit 1
+          fi
+          echo "ED_SIGNATURE=$ED_SIGNATURE" >> "$GITHUB_ENV"
+          echo "FILE_LENGTH=$FILE_LENGTH" >> "$GITHUB_ENV"
+
+      - name: Prepare release notes
+        run: |
+          python3 scripts/extract-release-notes.py "$APP_VERSION" > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "See the CHANGELOG for details." > release-notes.md
+          fi
+          python3 scripts/changelog-to-html.py "$APP_VERSION" > sparkle-release-notes.html
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "build/FloralMD-${VERSION}.dmg" \
+              "build/FloralMD-${VERSION}.sha256" \
+              --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "FloralMD ${VERSION}" \
+              --notes-file release-notes.md \
+              --latest
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "build/FloralMD-${VERSION}.dmg" \
+              "build/FloralMD-${VERSION}.sha256" \
+              --title "FloralMD ${VERSION}" \
+              --notes-file release-notes.md \
+              --latest
+          fi
+
+      - name: Check out release feed
+        uses: actions/checkout@v5
+        with:
+          ref: feed
+          path: feed
+
+      - name: Update and publish appcast
+        env:
+          ASSET_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/FloralMD-${{ env.VERSION }}.dmg
+        run: |
+          if [ ! -f feed/appcast.xml ]; then
+            cp scripts/appcast-template.xml feed/appcast.xml
+          fi
+
+          python3 scripts/update-appcast.py \
+            --appcast feed/appcast.xml \
+            --version "$APP_VERSION" \
+            --build "$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' Info.plist)" \
+            --url "$ASSET_URL" \
+            --signature "$ED_SIGNATURE" \
+            --length "$FILE_LENGTH" \
+            --pub-date "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')" \
+            --description-file sparkle-release-notes.html
+
+          git -C feed config user.name "github-actions[bot]"
+          git -C feed config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C feed add appcast.xml
+          if git -C feed diff --cached --quiet; then
+            echo "Appcast already contains this release."
+          else
+            git -C feed commit -m "Update appcast for ${GITHUB_REF_NAME}"
+            git -C feed push origin HEAD:feed
+          fi

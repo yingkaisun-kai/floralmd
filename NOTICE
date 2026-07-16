@@ -1,0 +1,12 @@
+FloralMD
+Copyright 2026 Yingkai Sun
+
+FloralMD is derived from Edmund (https://github.com/I7T5/Edmund), originally
+created by Yina Tang and distributed under the Apache License, Version 2.0.
+
+FloralMD contains substantial modifications, including a new product identity,
+application icon, package and bundle identifiers, project infrastructure, and
+subsequent user-interface features. FloralMD is independently developed and is
+not endorsed by or affiliated with the Edmund project or its contributors.
+
+The Apache License, Version 2.0 is included in the LICENSE file.

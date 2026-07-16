@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Only the latest run per branch/PR matters; cancel superseded work.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      # Keep CI on the same Xcode generation used for FloralMD development.
+      # The runner OS/toolchain does not change the macOS 14 deployment target.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Toolchain version
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # Cache the SwiftPM build (deps + compiled objects) keyed on the resolved
+      # dependency graph, so green runs don't recompile SwiftMath etc. each time.
+      - name: Cache .build
+        uses: actions/cache@v5
+        with:
+          path: .build
+          # v3-macos26 isolates this cache from Xcode 16 artifacts created by
+          # the retired macos-14 runner.
+          key: spm-v3-macos26-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-v3-macos26-${{ runner.os }}-
+
+      - name: Test
+        run: swift test
