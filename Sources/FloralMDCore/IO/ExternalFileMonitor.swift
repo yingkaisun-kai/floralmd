@@ -13,6 +13,9 @@ public final class ExternalFileMonitor {
     private var retryTask: Task<Void, Never>?
     private var notificationTask: Task<Void, Never>?
     private var isRunning = false
+    private var sourceGeneration = 0
+    private var registeredSourceGeneration: Int?
+    private var readinessContinuations: [CheckedContinuation<Void, Never>] = []
 
     public init(url: URL,
                 debounce: Duration = .milliseconds(150),
@@ -34,8 +37,26 @@ public final class ExternalFileMonitor {
         installSource()
     }
 
+    /// Test synchronization boundary for callers that must write immediately
+    /// after starting. `resume()` schedules registration but does not wait for it.
+    func startAndWaitUntilReady() async {
+        start()
+        guard registeredSourceGeneration == sourceGeneration else {
+            await withCheckedContinuation { continuation in
+                if registeredSourceGeneration == sourceGeneration || !isRunning {
+                    continuation.resume()
+                } else {
+                    readinessContinuations.append(continuation)
+                }
+            }
+            return
+        }
+    }
+
     public func stop() {
         isRunning = false
+        registeredSourceGeneration = nil
+        resumeReadinessContinuations()
         retryTask?.cancel()
         retryTask = nil
         notificationTask?.cancel()
@@ -61,6 +82,11 @@ public final class ExternalFileMonitor {
         newSource.setCancelHandler {
             close(descriptor)
         }
+        sourceGeneration &+= 1
+        let generation = sourceGeneration
+        newSource.setRegistrationHandler { [weak self] in
+            self?.sourceDidRegister(generation: generation)
+        }
         newSource.setEventHandler { [weak self] in
             self?.handleEvent()
         }
@@ -76,12 +102,25 @@ public final class ExternalFileMonitor {
         if !flags.intersection([.rename, .delete, .revoke]).isEmpty {
             source.cancel()
             self.source = nil
+            registeredSourceGeneration = nil
             // Atomic writes have normally installed the replacement by the time
             // the old inode reports rename/delete. Re-arm immediately so a
             // second quick save cannot land inside the retry delay. If the path
             // is briefly absent, installSource() falls back to the retry loop.
             installSource()
         }
+    }
+
+    private func sourceDidRegister(generation: Int) {
+        guard isRunning, source != nil, generation == sourceGeneration else { return }
+        registeredSourceGeneration = generation
+        resumeReadinessContinuations()
+    }
+
+    private func resumeReadinessContinuations() {
+        let continuations = readinessContinuations
+        readinessContinuations.removeAll()
+        continuations.forEach { $0.resume() }
     }
 
     private func scheduleNotification() {

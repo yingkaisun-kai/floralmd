@@ -6,6 +6,51 @@ import AppKit
 /// documents). The `typewriterModeEnabled` stored flag lives on the main class.
 extension EditorTextView {
 
+    /// Current TextKit 2 viewport expressed in raw-source offsets. Storage and
+    /// raw source are character-identical, so this is the bridge from live
+    /// viewport layout to the minimap's source-based coordinate model.
+    public func currentViewportSourceRange() -> NSRange? {
+        guard let tlm = textLayoutManager else { return nil }
+        if let scrollView = enclosingScrollView,
+           frame.height <= scrollView.documentVisibleRect.height + 1 {
+            return NSRange(location: 0, length: (rawSource as NSString).length)
+        }
+        if let viewport = tlm.textViewportLayoutController.viewportRange {
+            let start = tlm.offset(from: tlm.documentRange.location,
+                                   to: viewport.location)
+            let end = tlm.offset(from: tlm.documentRange.location,
+                                 to: viewport.endLocation)
+            let length = (rawSource as NSString).length
+            let clampedStart = min(length, max(0, start))
+            let clampedEnd = min(length, max(clampedStart, end))
+            return NSRange(location: clampedStart, length: clampedEnd - clampedStart)
+        }
+        return nil
+    }
+
+    /// Centers a source offset without moving the caret. Each pass lays out
+    /// only the target fragment, then re-measures after the viewport settles;
+    /// it never requests real geometry for every off-screen fragment.
+    public func scrollSourceOffsetToCenter(_ offset: Int) {
+        guard let scrollView = enclosingScrollView,
+              let tlm = textLayoutManager else { return }
+        let length = (rawSource as NSString).length
+        let clamped = min(length, max(0, offset))
+        let visibleHeight = scrollView.contentView.bounds.height
+
+        for _ in 0..<3 {
+            guard let lineRect = lineRect(forCharacterAt: clamped) else { return }
+            let targetY = lineRect.midY + textContainerOrigin.y - visibleHeight / 2
+            let maxY = max(0, frame.height - visibleHeight)
+            let clampedY = min(max(0, targetY), maxY)
+            scrollView.contentView.scroll(
+                to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: clampedY)
+            )
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            tlm.textViewportLayoutController.layoutViewport()
+        }
+    }
+
     /// Runs `body` (which restyles the active block, changing its height) while
     /// pinning the line at the TOP of the viewport to the same screen position
     /// — so the part of the document the user is looking at doesn't move, even

@@ -16,7 +16,7 @@ struct ExternalFileMonitorTests {
         let monitor = ExternalFileMonitor(url: url, debounce: .milliseconds(20)) {
             eventCount += 1
         }
-        monitor.start()
+        await monitor.startAndWaitUntilReady()
         defer { monitor.stop() }
 
         try Data("two".utf8).write(to: url, options: .atomic)
@@ -40,14 +40,14 @@ struct ExternalFileMonitorTests {
         let monitor = ExternalFileMonitor(url: url, debounce: .milliseconds(100)) {
             eventCount += 1
         }
-        monitor.start()
+        await monitor.startAndWaitUntilReady()
 
         try Data("own-save".utf8).write(to: url, options: .atomic)
         monitor.stop()
         try await Task.sleep(for: .milliseconds(200))
         #expect(eventCount == 0)
 
-        monitor.start()
+        await monitor.startAndWaitUntilReady()
         try Data("external-save".utf8).write(to: url, options: .atomic)
         try await waitUntil { eventCount >= 1 }
         #expect(eventCount >= 1)

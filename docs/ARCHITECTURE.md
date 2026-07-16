@@ -84,6 +84,8 @@ Markdown 源码
   `EditorTextView.reloadContent`；若本地也有未保存修改，则按“冲突处理”设置
   保留、询问或载入磁盘版本。重载会保留仍然有效的选区并清空旧撤销历史；
   输入法存在 marked text 时必须延迟到组合提交后，不能直接替换 TextKit 存储。
+  `DispatchSource.resume()` 返回不代表 vnode 监听已经注册；需要紧接着写入的测试
+  必须等待 registration handler 确认就绪，不能用 sleep 或延长超时猜测注册时序。
 
 ## 5. TextKit 2 自定义绘制
 
@@ -140,7 +142,12 @@ Markdown 源码
 - Git 面板读取工作区状态，但不在应用内执行提交或推送；
 - Git 仓库根目录探测在主线程同步执行，因此必须基于稳定的文件系统路径做有界
   向上遍历；不能依赖 bookmark 或 Save As 产生的 `URL` 在卷根处自行稳定。
-- 语义缩略图展示标题、列表、代码、Git 改动、光标和视口位置；
+- 语义缩略图展示标题、列表、代码、Git 改动、光标和视口位置。其纵轴统一使用
+  源码 UTF-16 位置与按当前正文列宽估算的语义换行行：短文档保持自然行距并只占
+  顶部所需高度，语义行总高度超过可用区域后才整体压缩。Git 标记、光标和
+  TextKit 2 `viewportRange` 都转换到同一坐标；点击或拖动再反向得到源码位置，
+  只布局目标片段并有限次收敛正文落点，不按 `document.bounds.height` 比例滚动，
+  也不枚举或信任全部离屏 fragment 的估算 y 坐标；
 - 原生 `NSDocument` 窗口标签负责多文档切换；
 - 应用仍在运行但没有可见文档窗口时，Dock 再激活完全交给 AppKit 的标准
   document-based reopen 流程创建至多一个未命名文档；

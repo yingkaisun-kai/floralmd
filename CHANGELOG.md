@@ -12,6 +12,18 @@ categories. Language is never marked with inline bold labels.
 
 ## [Unreleased]
 
+## [2026.7.2] — 2026-07-16
+
+### 中文
+
+#### 修复
+- 修复语义缩略图与正文位置不一致的问题：短文档不再被纵向铺满，长文档只在超出可用高度后压缩，自动换行内容、Git 标记、光标、视口与点击拖动现在使用同一套源码坐标。
+
+### English
+
+#### Fixed
+- Fixed the semantic minimap drifting from the document: short files no longer stretch to fill its height, long files compress only when needed, and wrapped content, Git markers, the caret, viewport, clicks, and drags now share one source-based coordinate model.
+
 ## [2026.7.1] — 2026-07-16
 
 ### 中文

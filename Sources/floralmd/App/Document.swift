@@ -335,7 +335,6 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         minimapView = DocumentMinimapView(frame: initialLayout.minimapFrame)
         minimapView.autoresizingMask = [.height]
         minimapView.editor = editor
-        minimapView.scrollView = scrollView
         minimapView.isHidden = !AppSettings.showMinimap
         scrollView.contentView.postsBoundsChangedNotifications = true
 
