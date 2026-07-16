@@ -170,7 +170,10 @@ public enum ShortcutCatalog {
         locked("window.minimize", .window, "Minimize", "最小化", "m",
                appearsInCommandPalette: true),
         custom("window.compact", .window, "Shrink to Minimum Window", "缩至最小窗口", nil),
-        custom("window.toggleAlwaysOnTop", .window, "Keep Window on Top", "窗口始终置顶", nil),
+        custom("window.toggleAlwaysOnTop", .window,
+               "Keep Window on Top in Current Space", "仅在当前 Space 置顶", nil),
+        custom("window.toggleAlwaysOnTopAcrossSpaces", .window,
+               "Keep Window on Top in All Spaces", "跨所有 Space 置顶", nil),
 
         custom("format.bulletedList", .format, "Bulleted List", "项目符号列表",
                .application("8", commandShift)),

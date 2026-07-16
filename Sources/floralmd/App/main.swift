@@ -200,6 +200,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         activeDocument?.toggleAlwaysOnTop(sender)
     }
 
+    @MainActor @objc func toggleDocumentAlwaysOnTopAcrossSpaces(_ sender: Any?) {
+        activeDocument?.toggleAlwaysOnTopAcrossSpaces(sender)
+    }
+
     @MainActor @objc func toggleDocumentFullScreen(_ sender: Any?) {
         activeDocument?.windowControllers.first?.window?.toggleFullScreen(sender)
     }
@@ -289,7 +293,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 menuItem.state = .off
                 return false
             }
-            menuItem.state = document.isWindowAlwaysOnTop ? .on : .off
+            menuItem.state = document.windowPinningMode == .currentSpace ? .on : .off
+        case #selector(toggleDocumentAlwaysOnTopAcrossSpaces(_:)):
+            guard let document = activeDocument else {
+                menuItem.state = .off
+                return false
+            }
+            menuItem.state = document.windowPinningMode == .allSpaces ? .on : .off
         case #selector(toggleDocumentFullScreen(_:)):
             guard let window = activeDocument?.windowControllers.first?.window else {
                 return false
@@ -605,12 +615,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                      action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         menu.addItem(.separator())
         let alwaysOnTop = menu.addItem(
-            withTitle: AppCopy.text("Keep Window on Top", "窗口始终置顶"),
+            withTitle: AppCopy.text(
+                "Keep Window on Top in Current Space",
+                "仅在当前 Space 置顶"
+            ),
             action: #selector(AppDelegate.toggleDocumentAlwaysOnTop(_:)),
             keyEquivalent: ""
         )
         alwaysOnTop.target = self
         ShortcutManager.configure(alwaysOnTop, commandID: "window.toggleAlwaysOnTop")
+        let alwaysOnTopAcrossSpaces = menu.addItem(
+            withTitle: AppCopy.text(
+                "Keep Window on Top in All Spaces",
+                "跨所有 Space 置顶"
+            ),
+            action: #selector(AppDelegate.toggleDocumentAlwaysOnTopAcrossSpaces(_:)),
+            keyEquivalent: ""
+        )
+        alwaysOnTopAcrossSpaces.target = self
+        ShortcutManager.configure(
+            alwaysOnTopAcrossSpaces,
+            commandID: "window.toggleAlwaysOnTopAcrossSpaces"
+        )
         menu.addItem(.separator())
         menu.addItem(withTitle: AppCopy.text("Bring All to Front", "全部置于前台"),
                      action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")

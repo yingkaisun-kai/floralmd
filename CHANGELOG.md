@@ -12,6 +12,30 @@ categories. Language is never marked with inline bold labels.
 
 ## [Unreleased]
 
+## [2026.7.3] — 2026-07-17
+
+### 中文
+
+#### 新增
+- 窗口置顶现在提供“不置顶”“仅当前 Space”和“所有 Space”三种会话模式，标题栏会常驻显示当前状态；“所有 Space”会跟随普通桌面 Space，并尽力加入其他 App 的原生全屏 Space 与 Stage Manager 集合，在 FloralMD 自身全屏结束后恢复。
+
+#### 修复
+- 修复点击不同段落或触发正文重新排版时，部分可见文字可能瞬时消失的问题；编辑器现在会在布局失效后立即重建受影响的可见 TextKit 2 片段。
+
+### English
+
+#### Added
+- Window pinning now has three session modes with an always-visible titlebar
+  status: Off, Current Space, and All Spaces. All Spaces follows the window
+  across desktop Spaces and is eligible to join other apps'
+  native full-screen Spaces and Stage Manager sets, then restores after
+  FloralMD exits its own full screen.
+
+#### Fixed
+- Fixed visible text briefly disappearing when clicking between blocks or
+  triggering document reflow. The editor now rebuilds affected visible
+  TextKit 2 fragments immediately after invalidating their layout.
+
 ## [2026.7.2] — 2026-07-16
 
 ### 中文

@@ -211,7 +211,7 @@ class DocumentController: NSDocumentController {
         guard let targetWindow = target.windowControllers.first?.window else { return }
         if target !== source, let sourceWindow = source.windowControllers.first?.window,
            targetWindow.tabbedWindows?.contains(sourceWindow) != true {
-            target.setAlwaysOnTop(source.isWindowAlwaysOnTop)
+            target.setPinningMode(source.windowPinningMode)
             sourceWindow.addTabbedWindow(targetWindow, ordered: .above)
         }
         targetWindow.makeKeyAndOrderFront(nil)

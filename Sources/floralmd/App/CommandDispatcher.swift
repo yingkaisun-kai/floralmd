@@ -19,6 +19,7 @@ enum CommandDispatcher {
         "window.minimize",
         "window.compact",
         "window.toggleAlwaysOnTop",
+        "window.toggleAlwaysOnTopAcrossSpaces",
     ]
 
     private struct Invocation {
@@ -139,6 +140,11 @@ enum CommandDispatcher {
         case "window.toggleAlwaysOnTop":
             return Invocation(
                 #selector(AppDelegate.toggleDocumentAlwaysOnTop(_:)),
+                target: appDelegate
+            )
+        case "window.toggleAlwaysOnTopAcrossSpaces":
+            return Invocation(
+                #selector(AppDelegate.toggleDocumentAlwaysOnTopAcrossSpaces(_:)),
                 target: appDelegate
             )
         case "format.bulletedList":

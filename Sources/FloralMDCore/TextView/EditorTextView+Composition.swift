@@ -124,10 +124,20 @@ extension EditorTextView {
         // an attribute-only change. Force the restyled blocks to re-lay-out so
         // the new indent shows immediately instead of after the next cursor move.
         if let tlm = textLayoutManager {
+            var invalidatedRanges: [NSTextRange] = []
             for idx in syncSet where idx < blocks.count {
                 if let range = blockTextRange(blocks[idx].range, tlm) {
                     tlm.invalidateLayout(for: range)
+                    invalidatedRanges.append(range)
                 }
+            }
+            // Attribute commits invalidate their existing TextKit 2 fragments
+            // immediately. Leaving their replacement to the deferred full-layout
+            // settle creates a render cycle with no drawable fragment, which is
+            // visible as transient blank text in a translucent window. Finish
+            // these small, synchronously styled ranges before returning.
+            for range in invalidatedRanges {
+                tlm.ensureLayout(for: range)
             }
         }
 

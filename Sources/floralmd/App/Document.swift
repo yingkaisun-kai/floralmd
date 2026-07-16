@@ -20,6 +20,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     private var sidebarControlsAccessory: NSTitlebarAccessoryViewController?
     private var outlineSidebarButton: NSButton?
     private var navigationSidebarButton: NSButton?
+    private var windowPinningButton: NSButton?
     private static let viewModeItemID = NSToolbarItem.Identifier("viewMode")
 
     /// Session-only zoom scale (View ▸ Actual Size/Zoom In/Zoom Out), applied on
@@ -247,10 +248,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         window.titleVisibility = .visible
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = true
-        // Keep full-screen available after the window moves to `.floating`;
-        // AppKit otherwise turns the standard green button into Zoom and
-        // disables Window ▸ Enter Full Screen before our suspension hook runs.
-        window.collectionBehavior.insert(.fullScreenPrimary)
+        window.applyPinningPresentation()
         // A compact capture is a transient entry surface, not another tab in a
         // full-size document group. Decide this before the window is shown so
         // AppKit cannot auto-merge it and shrink an ordinary document window.
@@ -426,6 +424,10 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             name: NSWindow.didBecomeKeyNotification, object: window
         )
         NotificationCenter.default.addObserver(
+            self, selector: #selector(windowWillEnterFullScreen(_:)),
+            name: NSWindow.willEnterFullScreenNotification, object: window
+        )
+        NotificationCenter.default.addObserver(
             self, selector: #selector(windowDidEnterFullScreen(_:)),
             name: NSWindow.didEnterFullScreenNotification, object: window
         )
@@ -534,6 +536,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             item.paletteLabel = item.label
         }
         refreshSidebarControlAppearance()
+        refreshWindowPinningButtonAppearance()
     }
 
     func refreshShortcutPresentation() {
@@ -542,8 +545,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     }
 
     /// Stable controls beside the traffic lights toggle the primary repository
-    /// sidebar and the outline attached to the editing surface. Neither drawer
-    /// needs to retain a content-width rail merely to expose its toggle.
+    /// sidebar and outline, then expose the current window-pinning mode.
     private func installSidebarControlsAccessory(in window: NSWindow) {
         func makeButton(action: Selector) -> NSButton {
             let button = NSButton()
@@ -563,16 +565,17 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
         let outlineButton = makeButton(action: #selector(toggleOutlineSidebar(_:)))
         let navigationButton = makeButton(action: #selector(toggleNavigationSidebar(_:)))
-        let controls = NSStackView(views: [navigationButton, outlineButton])
+        let pinningButton = makeButton(action: #selector(showWindowPinningMenu(_:)))
+        let controls = NSStackView(views: [navigationButton, outlineButton, pinningButton])
         controls.orientation = .horizontal
         controls.alignment = .centerY
         controls.spacing = 4
         controls.translatesAutoresizingMaskIntoConstraints = false
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 64, height: 28))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 96, height: 28))
         container.addSubview(controls)
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: 64),
+            container.widthAnchor.constraint(equalToConstant: 96),
             container.heightAnchor.constraint(equalToConstant: 28),
             controls.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             controls.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -587,7 +590,9 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         sidebarControlsAccessory = accessory
         outlineSidebarButton = outlineButton
         navigationSidebarButton = navigationButton
+        windowPinningButton = pinningButton
         refreshSidebarControlAppearance()
+        refreshWindowPinningButtonAppearance()
     }
 
     private func refreshSidebarControlAppearance() {
@@ -613,6 +618,66 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         )
         update(navigationSidebarButton, symbol: "sidebar.left", description: navigationDescription)
         update(outlineSidebarButton, symbol: "list.bullet.indent", description: outlineDescription)
+    }
+
+    private func refreshWindowPinningButtonAppearance() {
+        let description = switch windowPinningMode {
+        case .none:
+            AppCopy.text("Window Pinning: Off", "窗口置顶：关闭")
+        case .currentSpace:
+            AppCopy.text("Window Pinning: Current Space", "窗口置顶：当前 Space")
+        case .allSpaces:
+            AppCopy.text("Window Pinning: All Spaces", "窗口置顶：所有 Space")
+        }
+        windowPinningButton?.image = NSImage(
+            systemSymbolName: windowPinningMode.statusSymbolName,
+            accessibilityDescription: description
+        )?.withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+        windowPinningButton?.toolTip = description
+        windowPinningButton?.setAccessibilityLabel(description)
+    }
+
+    @objc private func showWindowPinningMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        menu.addItem(pinningMenuItem(
+            title: AppCopy.text("Off", "不置顶"),
+            mode: .none,
+            action: #selector(setNoWindowPinning(_:))
+        ))
+        menu.addItem(pinningMenuItem(
+            title: AppCopy.text("Current Space", "仅当前 Space 置顶"),
+            mode: .currentSpace,
+            action: #selector(setCurrentSpaceWindowPinning(_:))
+        ))
+        menu.addItem(pinningMenuItem(
+            title: AppCopy.text("All Spaces", "跨所有 Space 置顶"),
+            mode: .allSpaces,
+            action: #selector(setAllSpacesWindowPinning(_:))
+        ))
+        menu.popUp(positioning: nil,
+                   at: NSPoint(x: 0, y: sender.bounds.maxY + 4),
+                   in: sender)
+    }
+
+    private func pinningMenuItem(title: String,
+                                 mode: WindowPinningMode,
+                                 action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.state = windowPinningMode == mode ? .on : .off
+        return item
+    }
+
+    @objc private func setNoWindowPinning(_ sender: Any?) {
+        setPinningMode(.none)
+    }
+
+    @objc private func setCurrentSpaceWindowPinning(_ sender: Any?) {
+        setPinningMode(.currentSpace)
+    }
+
+    @objc private func setAllSpacesWindowPinning(_ sender: Any?) {
+        setPinningMode(.allSpaces)
     }
 
     private func withShortcut(_ text: String, commandID: String) -> String {
@@ -682,12 +747,16 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
     // MARK: - Window Level / Quick Capture
 
-    var isWindowAlwaysOnTop: Bool {
-        (windowControllers.first?.window as? DocumentWindow)?.isAlwaysOnTop == true
+    var windowPinningMode: WindowPinningMode {
+        (windowControllers.first?.window as? DocumentWindow)?.pinningMode ?? .none
     }
 
     @objc func toggleAlwaysOnTop(_ sender: Any?) {
-        setAlwaysOnTop(!isWindowAlwaysOnTop)
+        setPinningMode(windowPinningMode == .currentSpace ? .none : .currentSpace)
+    }
+
+    @objc func toggleAlwaysOnTopAcrossSpaces(_ sender: Any?) {
+        setPinningMode(windowPinningMode == .allSpaces ? .none : .allSpaces)
     }
 
     @objc func shrinkToMinimumWindow(_ sender: Any?) {
@@ -700,12 +769,13 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         }
     }
 
-    func setAlwaysOnTop(_ enabled: Bool) {
+    func setPinningMode(_ mode: WindowPinningMode) {
         guard let window = windowControllers.first?.window else { return }
         let group = window.tabbedWindows ?? [window]
         for case let documentWindow as DocumentWindow in group {
-            documentWindow.isAlwaysOnTop = enabled
+            documentWindow.pinningMode = mode
         }
+        refreshWindowPinningButtonAppearance()
         refreshPinnedWindowPresentation()
     }
 
@@ -715,7 +785,9 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             makeWindowControllers()
             showWindows()
         }
-        setAlwaysOnTop(true)
+        setPinningMode(PinnedWindowPresentationPolicy.quickCaptureActivationMode(
+            currentMode: windowPinningMode
+        ))
         guard let window = windowControllers.first?.window else { return }
         outlineSidebar?.setExpanded(false, animated: false)
         navigationSidebar?.setExpanded(false, animated: false)
@@ -743,31 +815,40 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         guard let window = notification.object as? DocumentWindow else { return }
         if let tabbedWindows = window.tabbedWindows {
             for case let tab as DocumentWindow in tabbedWindows {
-                tab.isAlwaysOnTop = window.isAlwaysOnTop
+                tab.pinningMode = window.pinningMode
             }
         }
+        refreshWindowPinningButtonAppearance()
         refreshPinnedWindowPresentation()
     }
 
+    @objc private func windowWillEnterFullScreen(_ notification: Notification) {
+        setPinningSuspendedForFullScreen(true, window: notification.object as? DocumentWindow)
+    }
+
     @objc private func windowDidEnterFullScreen(_ notification: Notification) {
-        setAlwaysOnTopSuspendedForFullScreen(true, window: notification.object as? DocumentWindow)
         refreshPinnedWindowPresentation()
     }
 
     @objc private func windowDidExitFullScreen(_ notification: Notification) {
-        setAlwaysOnTopSuspendedForFullScreen(false, window: notification.object as? DocumentWindow)
+        setPinningSuspendedForFullScreen(false, window: notification.object as? DocumentWindow)
         refreshPinnedWindowPresentation()
     }
 
-    private func setAlwaysOnTopSuspendedForFullScreen(_ suspended: Bool,
-                                                       window: DocumentWindow?) {
+    fileprivate func windowDidFailToEnterFullScreen(_ window: DocumentWindow) {
+        setPinningSuspendedForFullScreen(false, window: window)
+        refreshPinnedWindowPresentation()
+    }
+
+    private func setPinningSuspendedForFullScreen(_ suspended: Bool,
+                                                  window: DocumentWindow?) {
         guard let window else { return }
         let group = window.tabbedWindows ?? [window]
         for case let tab as DocumentWindow in group {
             if suspended {
-                tab.suspendAlwaysOnTopForFullScreen()
+                tab.suspendPinningForOwnFullScreen()
             } else {
-                tab.resumeAlwaysOnTopAfterFullScreen()
+                tab.resumePinningAfterOwnFullScreen()
             }
         }
     }
@@ -784,7 +865,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         guard let window = windowControllers.first?.window as? DocumentWindow else { return }
         let workspace = NSWorkspace.shared
         let opacity = PinnedWindowPresentationPolicy.backgroundOpacity(
-            isAlwaysOnTop: window.isAlwaysOnTop,
+            mode: window.pinningMode,
             isFullScreen: window.styleMask.contains(.fullScreen),
             reduceTransparency: workspace.accessibilityDisplayShouldReduceTransparency,
             increaseContrast: workspace.accessibilityDisplayShouldIncreaseContrast
@@ -1727,6 +1808,11 @@ private final class DocumentContainerView: NSView {
 /// including successful manual saves and autosaves, so the tab needs no second
 /// source of truth.
 private final class DocumentWindowController: NSWindowController {
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        guard let window = window as? DocumentWindow else { return }
+        (document as? Document)?.windowDidFailToEnterFullScreen(window)
+    }
+
     override func setDocumentEdited(_ dirtyFlag: Bool) {
         super.setDocumentEdited(dirtyFlag)
         (document as? Document)?.documentEditedStateDidChange(dirtyFlag)
@@ -1757,23 +1843,56 @@ private final class DocumentWindowController: NSWindowController {
 final class DocumentWindow: NSWindow {
     weak var viewModeButton: NSView?
     var makeViewModeMenu: (() -> NSMenu)?
-    var isAlwaysOnTop = false {
-        didSet { applyPreferredLevel() }
+    var pinningMode: WindowPinningMode = .none {
+        didSet { applyPinningPresentation() }
     }
-    private var isAlwaysOnTopSuspended = false
+    private var isPinningSuspendedForOwnFullScreen = false
 
-    func suspendAlwaysOnTopForFullScreen() {
-        isAlwaysOnTopSuspended = true
-        applyPreferredLevel()
-    }
-
-    func resumeAlwaysOnTopAfterFullScreen() {
-        isAlwaysOnTopSuspended = false
-        applyPreferredLevel()
+    func suspendPinningForOwnFullScreen() {
+        isPinningSuspendedForOwnFullScreen = true
+        applyPinningPresentation()
     }
 
-    private func applyPreferredLevel() {
-        level = isAlwaysOnTop && !isAlwaysOnTopSuspended ? .floating : .normal
+    func resumePinningAfterOwnFullScreen() {
+        isPinningSuspendedForOwnFullScreen = false
+        applyPinningPresentation()
+    }
+
+    /// `.canJoinAllSpaces` covers ordinary desktop Spaces.
+    /// `.fullScreenAuxiliary` makes the window eligible to accompany another
+    /// primary full-screen window, while `.canJoinAllApplications` extends that
+    /// eligibility to other apps and Stage Manager sets. Those roles cannot be
+    /// combined with `.fullScreenPrimary`, so FloralMD's own full-screen request
+    /// temporarily suspends pinning before making this the primary window.
+    func applyPinningPresentation() {
+        let presentation = PinnedWindowPresentationPolicy.windowPresentation(
+            mode: pinningMode,
+            isSuspendedForOwnFullScreen: isPinningSuspendedForOwnFullScreen
+        )
+        level = presentation.floatsAboveNormalWindows ? .floating : .normal
+
+        var behavior: CollectionBehavior = []
+        if presentation.joinsAllSpaces {
+            behavior.insert(.canJoinAllSpaces)
+        }
+        if presentation.joinsAllApplications {
+            behavior.insert(.canJoinAllApplications)
+        }
+        if presentation.actsAsFullScreenAuxiliary {
+            behavior.insert(.fullScreenAuxiliary)
+        }
+        if presentation.actsAsPrimaryWindow {
+            behavior.insert(.primary)
+            behavior.insert(.fullScreenPrimary)
+        }
+        collectionBehavior = behavior
+    }
+
+    override func toggleFullScreen(_ sender: Any?) {
+        if !styleMask.contains(.fullScreen) {
+            suspendPinningForOwnFullScreen()
+        }
+        super.toggleFullScreen(sender)
     }
 
     override func sendEvent(_ event: NSEvent) {
