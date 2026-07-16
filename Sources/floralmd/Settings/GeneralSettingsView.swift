@@ -20,6 +20,7 @@ struct GeneralSettingsView: View {
     @AppStorage(AppSettings.Key.quickCaptureEnabled) private var quickCaptureEnabled = false
     @AppStorage(AppSettings.Key.conflictResolution) private var conflict = AppSettings.ConflictResolution.ask
     @State private var untitledDirectory: URL?
+    @State private var isChoosingUntitledDirectory = false
 
     private func tr(_ en: String, _ zh: String) -> String { AppCopy.text(en, zh, language: language) }
 
@@ -116,24 +117,12 @@ struct GeneralSettingsView: View {
                     Toggle(
                         tr("Automatically create a file for new drafts",
                            "自动为新草稿创建文件"),
-                        isOn: $autoSaveUntitled
-                    )
-                    .onChange(of: autoSaveUntitled) {
-                        if autoSaveUntitled && untitledDirectory == nil {
-                            chooseUntitledDirectory(disableOnCancel: true)
-                        }
-                        if !autoSaveUntitled && quickCaptureEnabled {
-                            quickCaptureEnabled = false
-                            NotificationCenter.default.post(
-                                name: .quickCaptureSettingsDidChange,
-                                object: nil
-                            )
-                        }
-                        NotificationCenter.default.post(
-                            name: .untitledAutoSaveSettingsDidChange,
-                            object: nil
+                        isOn: Binding(
+                            get: { autoSaveUntitled },
+                            set: { requestToggleChange(.setAutoSaveUntitledDocuments($0)) }
                         )
-                    }
+                    )
+                    .disabled(isChoosingUntitledDirectory)
 
                     HStack(spacing: 8) {
                         Text(untitledDirectory?.path(percentEncoded: false)
@@ -142,7 +131,7 @@ struct GeneralSettingsView: View {
                             .truncationMode(.middle)
                             .frame(width: 285, alignment: .leading)
                         Button(tr("Choose…", "选择…")) {
-                            chooseUntitledDirectory(disableOnCancel: false)
+                            chooseUntitledDirectory(committing: nil)
                         }
                     }
                     .padding(.leading, 20)
@@ -163,11 +152,12 @@ struct GeneralSettingsView: View {
 
                     Toggle(
                         tr("Enable Quick Capture", "启用快速记录"),
-                        isOn: $quickCaptureEnabled
+                        isOn: Binding(
+                            get: { quickCaptureEnabled },
+                            set: { requestToggleChange(.setQuickCaptureEnabled($0)) }
+                        )
                     )
-                    .onChange(of: quickCaptureEnabled) {
-                        configureQuickCapture()
-                    }
+                    .disabled(isChoosingUntitledDirectory)
 
                     Text(tr(
                         "Creates a new always-on-top draft from any app. Configure its global shortcut in Shortcuts settings.",
@@ -200,6 +190,10 @@ struct GeneralSettingsView: View {
         .settingsPanePadding()
         .onAppear {
             untitledDirectory = AppSettings.untitledDocumentDirectoryURL()
+            applyToggleState(GeneralSettingsTogglePolicy.normalized(
+                toggleState,
+                hasUntitledDirectory: untitledDirectory != nil
+            ))
         }
     }
 
@@ -208,26 +202,73 @@ struct GeneralSettingsView: View {
         return tr(seconds == 1 ? "1 second" : "\(seconds) seconds", "\(seconds) 秒")
     }
 
-    private func configureQuickCapture() {
-        if quickCaptureEnabled {
-            if untitledDirectory == nil,
-               !chooseUntitledDirectory(disableOnCancel: false) {
-                quickCaptureEnabled = false
-            } else if !autoSaveUntitled {
-                // Quick Capture explicitly promises independent Markdown files,
-                // so enabling it also enables the existing first-save pipeline.
-                autoSaveUntitled = true
-                NotificationCenter.default.post(
-                    name: .untitledAutoSaveSettingsDidChange,
-                    object: nil
-                )
-            }
-        }
-        NotificationCenter.default.post(name: .quickCaptureSettingsDidChange, object: nil)
+    private var toggleState: GeneralSettingsToggleState {
+        GeneralSettingsToggleState(
+            autoSaveUntitledDocuments: autoSaveUntitled,
+            quickCaptureEnabled: quickCaptureEnabled
+        )
     }
 
-    @discardableResult
-    private func chooseUntitledDirectory(disableOnCancel: Bool) -> Bool {
+    private func requestToggleChange(_ intent: GeneralSettingsToggleIntent) {
+        switch GeneralSettingsTogglePolicy.transition(
+            from: toggleState,
+            intent: intent,
+            hasUntitledDirectory: untitledDirectory != nil
+        ) {
+        case .commit(let state):
+            applyToggleState(state)
+        case .chooseDirectory(let state):
+            chooseUntitledDirectory(
+                committing: state,
+                replacing: toggleState
+            )
+        }
+    }
+
+    private func applyToggleState(_ state: GeneralSettingsToggleState) {
+        let untitledChanged = autoSaveUntitled != state.autoSaveUntitledDocuments
+        let quickCaptureChanged = quickCaptureEnabled != state.quickCaptureEnabled
+        autoSaveUntitled = state.autoSaveUntitledDocuments
+        quickCaptureEnabled = state.quickCaptureEnabled
+        if untitledChanged {
+            NotificationCenter.default.post(
+                name: .untitledAutoSaveSettingsDidChange,
+                object: nil
+            )
+        }
+        if quickCaptureChanged {
+            NotificationCenter.default.post(
+                name: .quickCaptureSettingsDidChange,
+                object: nil
+            )
+        }
+    }
+
+    private func chooseUntitledDirectory(
+        committing proposedState: GeneralSettingsToggleState?,
+        replacing originalState: GeneralSettingsToggleState? = nil
+    ) {
+        guard !isChoosingUntitledDirectory else { return }
+        guard let settingsWindow = NSApplication.shared.keyWindow
+                ?? NSApplication.shared.mainWindow else { return }
+        isChoosingUntitledDirectory = true
+        // Finish the SwiftUI control transaction before starting AppKit's sheet.
+        // Starting a synchronous modal loop from @AppStorage.onChange can leave
+        // the panel behind the Settings window and make the click look ignored.
+        DispatchQueue.main.async {
+            presentUntitledDirectoryPanel(
+                for: settingsWindow,
+                committing: proposedState,
+                replacing: originalState
+            )
+        }
+    }
+
+    private func presentUntitledDirectoryPanel(
+        for settingsWindow: NSWindow,
+        committing proposedState: GeneralSettingsToggleState?,
+        replacing originalState: GeneralSettingsToggleState?
+    ) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -238,22 +279,31 @@ struct GeneralSettingsView: View {
             "Choose where FloralMD should create files for nonblank Untitled documents.",
             "选择 FloralMD 为非空白未命名文档创建文件的位置。"
         )
-        guard panel.runModal() == .OK, let url = panel.url else {
-            if disableOnCancel { autoSaveUntitled = false }
-            return false
-        }
-        do {
-            try AppSettings.storeUntitledDocumentDirectory(url)
-            untitledDirectory = url
-            NotificationCenter.default.post(
-                name: .untitledAutoSaveSettingsDidChange,
-                object: nil
-            )
-            return true
-        } catch {
-            if disableOnCancel { autoSaveUntitled = false }
-            NSApplication.shared.presentError(error)
-            return false
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        settingsWindow.makeKeyAndOrderFront(nil)
+        panel.beginSheetModal(for: settingsWindow) { response in
+            isChoosingUntitledDirectory = false
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try AppSettings.storeUntitledDocumentDirectory(url)
+                untitledDirectory = url
+                if let proposedState, let originalState {
+                    applyToggleState(
+                        GeneralSettingsTogglePolicy.completingDirectorySelection(
+                            originalState: originalState,
+                            proposedState: proposedState,
+                            selectedDirectory: true
+                        )
+                    )
+                } else {
+                    NotificationCenter.default.post(
+                        name: .untitledAutoSaveSettingsDidChange,
+                        object: nil
+                    )
+                }
+            } catch {
+                settingsWindow.presentError(error)
+            }
         }
     }
 }

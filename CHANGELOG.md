@@ -12,6 +12,8 @@ categories. Language is never marked with inline bold labels.
 
 ## [Unreleased]
 
+## [2026.7.1] — 2026-07-16
+
 ### 中文
 
 #### 新增
@@ -21,6 +23,9 @@ categories. Language is never marked with inline bold labels.
 
 #### 变更
 - 产品、模块、Bundle Identifier、Quick Look、偏好与日志目录、构建发布链及项目文档统一采用 FloralMD 身份；新的公开仓库与 Sparkle feed 使用独立的孤儿分支快照历史。
+
+#### 修复
+- 修复“自动为新草稿创建文件”和“启用快速记录”无法启用的问题；目录选择器现在会清晰显示在设置窗口前方，选择成功后保留开关状态，取消则保持关闭。
 
 ### English
 
@@ -43,6 +48,12 @@ categories. Language is never marked with inline bold labels.
   preferences and log paths, build and release pipeline, and project
   documentation on the FloralMD identity. The new public repository and
   Sparkle feed use independent orphan snapshot histories.
+
+#### Fixed
+- Fixed Automatically Create a File for New Drafts and Enable Quick Capture
+  failing to turn on. The folder picker now appears clearly in front of
+  Settings, successful selection keeps the requested settings enabled, and
+  cancellation leaves them off.
 
 ## [2026.7.0] — 2026-07-15
 

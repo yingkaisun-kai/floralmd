@@ -61,7 +61,7 @@ public struct MemoryIncidentPolicy: Sendable {
         self.recoverySampleCount = max(1, recoverySampleCount)
     }
 
-    public static let petalMDDefault = MemoryIncidentPolicy(
+    public static let floralMDDefault = MemoryIncidentPolicy(
         hardLimitBytes: 1_024 * 1_024 * 1_024,
         rapidGrowthFloorBytes: 512 * 1_024 * 1_024,
         rapidGrowthBytes: 384 * 1_024 * 1_024,
@@ -89,7 +89,7 @@ public struct MemoryIncidentTracker: Sendable {
     private var nextMilestoneBytes: UInt64 = 0
     private var consecutiveRecoverySamples = 0
 
-    public init(capacity: Int = 36, policy: MemoryIncidentPolicy = .petalMDDefault) {
+    public init(capacity: Int = 36, policy: MemoryIncidentPolicy = .floralMDDefault) {
         ring = MemoryDiagnosticRing(capacity: capacity)
         self.policy = policy
     }

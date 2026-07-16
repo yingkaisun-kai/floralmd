@@ -273,6 +273,16 @@ class WorkflowConfigurationTests(unittest.TestCase):
 
 
 class QuickLookBundleConfigurationTests(unittest.TestCase):
+    def test_quick_look_source_plists_use_non_release_placeholders(self) -> None:
+        for relative_path in (
+            "Resources/QuickLook/Info.plist",
+            "Resources/Debug/QuickLook-Info.plist",
+        ):
+            with (ROOT / relative_path).open("rb") as file:
+                info = plistlib.load(file)
+            self.assertEqual(info.get("CFBundleShortVersionString"), "0.0.0")
+            self.assertEqual(info.get("CFBundleVersion"), "0")
+
     def test_quick_look_variants_declare_and_embed_the_app_icon(self) -> None:
         for relative_path in (
             "Resources/QuickLook/Info.plist",
