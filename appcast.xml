@@ -5,5 +5,56 @@
         <link>https://github.com/yingkaisun-kai/floralmd</link>
         <description>FloralMD release feed</description>
         <language>en</language>
+        <item>
+            <title>FloralMD 2026.7.0</title>
+            <pubDate>Thu, 16 Jul 2026 10:48:13 +0000</pubDate>
+            <description><![CDATA[
+<style>body{font:13px -apple-system,system-ui;color:#111;margin:8px}h3{font-size:15px;margin:14px 0 6px}h4{font-size:13px;margin:12px 0 4px}ul{margin:0 0 8px;padding-left:20px}li{margin:2px 0}code{font-family:ui-monospace,monospace;background:rgba(127,127,127,.15);padding:1px 4px;border-radius:3px}@media(prefers-color-scheme:dark){body{color:#eee}}</style>
+<h3>中文</h3>
+<h4>新增</h4>
+<ul>
+<li>现在可以在文件侧边栏中双击文件名直接重命名 Markdown 文件；扩展名会自动保留，并提供清晰的校验反馈。</li>
+<li>现在可以为“快速记录”设置全局快捷键，从任意应用打开轻量的未命名笔记；文档窗口也可通过“窗口始终置顶”保持在其他应用之上。</li>
+<li>文档保存现在可设为自动或仅手动，自动保存间隔支持 1 到 30 秒；非空未命名文档还可在指定文件夹中自动完成首次保存。</li>
+</ul>
+<h4>变更</h4>
+<ul>
+<li>新建文档窗口现在默认收起两侧边栏，同时保留原有控件，仍可在当前窗口中展开任一侧边栏。</li>
+<li>标题栏与侧边栏重命名现在共用协调且不会覆盖现有文件的处理流程，并支持同步已打开文档的 URL 以及仅变更大小写的重命名。</li>
+<li>“快速记录”现在以紧凑浮动窗口打开，不会改变普通窗口保存的尺寸；置顶窗口进入全屏时会暂时恢复普通层级，退出全屏后再恢复置顶。</li>
+<li>此版本以 FloralMD 的 Bundle Identifier、feed 地址和 build 1 建立全新初始化的公开发布与 Sparkle 更新链。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>自动保存现在会可靠启动、清除过期的编辑状态、在退出前保存所有已命名文档并显示保存状态；同时避免误报外部修改冲突，并保留真正尚未保存的本地内容。</li>
+<li>原生文档标签页现在会正确显示并清除未保存标记；外部文件发生无冲突修改时，已打开文档也会安全刷新。</li>
+</ul>
+<h3>English</h3>
+<h4>Added</h4>
+<ul>
+<li>Markdown files can now be renamed in place by double-clicking their name in the file sidebar, with extension preservation and clear validation feedback.</li>
+<li>Quick Capture can be assigned a global shortcut to open a low-friction untitled note from any app, and document windows can be kept above other apps with Window Always on Top.</li>
+<li>Document saving can be automatic or manual-only, with automatic intervals from 1 to 30 seconds and optional first-save of nonblank untitled documents into a chosen folder.</li>
+</ul>
+<h4>Changed</h4>
+<ul>
+<li>New document windows now start with both sidebars collapsed, while keeping the existing controls available to expand either sidebar for that window.</li>
+<li>Titlebar and sidebar renaming now share coordinated, non-overwriting file handling, including open-document URL synchronization and case-only renames.</li>
+<li>Quick Capture opens as a compact floating window without changing the saved size of normal windows; pinned windows temporarily return to the normal level in full screen and restore afterward.</li>
+<li>This release establishes the newly initialized FloralMD public release and Sparkle update chain with its bundle identifier, feed URL, and build 1 baseline.</li>
+</ul>
+<h4>Fixed</h4>
+<ul>
+<li>Automatic saving now starts reliably, clears stale edited state, flushes named documents before quit, reports save status, and avoids false external-change conflicts while preserving genuinely unsaved local work.</li>
+<li>Native document tabs show and clear their unsaved marker correctly, and clean external file changes refresh open documents safely.</li>
+</ul>
+]]></description>
+            <enclosure url="https://github.com/yingkaisun-kai/floralmd/releases/download/v2026.7.0/FloralMD-2026.7.0.dmg"
+                       sparkle:version="1"
+                       sparkle:shortVersionString="2026.7.0"
+                       sparkle:edSignature="eCzm9P7FwKaIbJ47dloQogZMQQnl9eapW4qVrbf01X22GG5tNLBdKpdis4o1eXq8tSWjNrfrLAmVVtLqA4rCAg=="
+                       length="12898341"
+                       type="application/x-apple-diskimage"/>
+        </item>
     </channel>
 </rss>
