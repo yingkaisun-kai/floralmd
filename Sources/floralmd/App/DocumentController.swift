@@ -196,12 +196,16 @@ class DocumentController: NSDocumentController {
     /// document tab. NSDocument remains the owner of saving and dirty state.
     @MainActor
     func openDocumentTab(at url: URL, from source: Document) {
-        openDocument(withContentsOf: url, display: true) { document, _, error in
+        // A sidebar open is always destined for an existing tab group. Keep a
+        // new document hidden until that membership is established so it can
+        // never appear first as a standalone window.
+        openDocument(withContentsOf: url, display: false) { document, _, error in
             if let error {
                 NSAlert(error: error).runModal()
                 return
             }
             guard let target = document as? Document else { return }
+            target.prepareForHiddenWindowPresentation()
             self.activateDocumentTab(target, beside: source)
         }
     }
@@ -209,12 +213,28 @@ class DocumentController: NSDocumentController {
     @MainActor
     func activateDocumentTab(_ target: Document, beside source: Document) {
         guard let targetWindow = target.windowControllers.first?.window else { return }
-        if target !== source, let sourceWindow = source.windowControllers.first?.window,
-           targetWindow.tabbedWindows?.contains(sourceWindow) != true {
-            target.setPinningMode(source.windowPinningMode)
-            sourceWindow.addTabbedWindow(targetWindow, ordered: .above)
+        if target !== source, let sourceWindow = source.windowControllers.first?.window {
+            let inheritedPinningMode = source.windowPinningMode
+            if inheritedPinningMode == .allSpaces,
+               source.activateDocumentIncrementallyInAllSpaces(target) {
+                return
+            }
+            source.prepareForNativeTabMutation()
+            target.prepareForNativeTabMutation()
+            target.applyInheritedOrdinaryPinningMode(inheritedPinningMode)
+            let groupedWindows = targetWindow.tabGroup?.windows ?? targetWindow.tabbedWindows ?? []
+            if !groupedWindows.contains(sourceWindow) {
+                sourceWindow.addTabbedWindow(targetWindow, ordered: .above)
+            }
+            targetWindow.makeKeyAndOrderFront(nil)
+            if inheritedPinningMode == .allSpaces {
+                target.setPinningMode(inheritedPinningMode)
+            }
+        } else {
+            if !target.activateAllSpacesPinnedPanelIfPresented() {
+                targetWindow.makeKeyAndOrderFront(nil)
+            }
         }
-        targetWindow.makeKeyAndOrderFront(nil)
         target.refreshNavigationSidebar()
     }
 

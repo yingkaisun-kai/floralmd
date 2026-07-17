@@ -302,6 +302,22 @@ class QuickLookBundleConfigurationTests(unittest.TestCase):
         self.assertIn("Quick Look extension build differs from the host app build", script)
 
 
+class AppIconAssetTests(unittest.TestCase):
+    def test_png_sources_preserve_alpha_channels(self) -> None:
+        paths = [ROOT / "Resources" / "AppIcon.png"]
+        paths.extend(sorted((ROOT / "docs" / "assets" / "AppIcon").glob("*.png")))
+        for path in paths:
+            data = path.read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n", path)
+            self.assertEqual(data[12:16], b"IHDR", path)
+            self.assertEqual(data[25], 6, f"{path} must be RGBA, not opaque RGB")
+
+    def test_bundle_builder_rejects_an_opaque_app_icon(self) -> None:
+        script = (ROOT / "scripts" / "build-app.sh").read_text(encoding="utf-8")
+        self.assertIn("sips -g hasAlpha Resources/AppIcon.icns", script)
+        self.assertIn("AppIcon.icns has no alpha channel", script)
+
+
 class ProductionUpdateIntegrationTests(unittest.TestCase):
     def test_app_menu_is_compiled_only_for_production(self) -> None:
         source = (ROOT / "Sources" / "floralmd" / "App" / "main.swift").read_text(

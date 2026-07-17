@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Pinned window presentation policy")
 struct PinnedWindowPresentationPolicyTests {
-    @Test("Pinning modes map to distinct window collection behavior")
+    @Test("Ordinary document windows retain primary-window behavior")
     func windowModes() {
         #expect(presentation(.none) == WindowPinningPresentation(
             floatsAboveNormalWindows: false,
@@ -21,12 +21,24 @@ struct PinnedWindowPresentationPolicyTests {
             actsAsPrimaryWindow: true
         ))
         #expect(presentation(.allSpaces) == WindowPinningPresentation(
-            floatsAboveNormalWindows: true,
-            joinsAllSpaces: true,
-            joinsAllApplications: true,
-            actsAsFullScreenAuxiliary: true,
-            actsAsPrimaryWindow: false
+            floatsAboveNormalWindows: false,
+            joinsAllSpaces: false,
+            joinsAllApplications: false,
+            actsAsFullScreenAuxiliary: false,
+            actsAsPrimaryWindow: true
         ))
+    }
+
+    @Test("All-Spaces auxiliary panel uses the proven cross-full-screen role")
+    func auxiliaryPanel() {
+        #expect(PinnedWindowPresentationPolicy.allSpacesAuxiliaryPresentation ==
+            WindowPinningPresentation(
+                floatsAboveNormalWindows: true,
+                joinsAllSpaces: true,
+                joinsAllApplications: false,
+                actsAsFullScreenAuxiliary: true,
+                actsAsPrimaryWindow: false
+            ))
     }
 
     @Test("Each pinning mode has a stable titlebar status symbol")

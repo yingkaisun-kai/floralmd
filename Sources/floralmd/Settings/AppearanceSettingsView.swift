@@ -52,124 +52,122 @@ struct AppearanceSettingsView: View {
     }
 
     var body: some View {
-        Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 12) {
-            GridRow {
-                Text(tr("Appearance:", "外观："))
-                    .gridColumnAlignment(.trailing)
-                Picker("", selection: $appearanceMode) {
-                    ForEach(AppSettings.AppearanceMode.displayOrder) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.radioGroup)
-                .horizontalRadioGroupLayout()
-                .labelsHidden()
-                .onChange(of: appearanceMode) { AppSettings.applyAppearance() }
-            }
-
-            GridRow {
-                Text(tr("Max content width:", "最大内容宽度："))
-                    .gridColumnAlignment(.trailing)
-                HStack(spacing: 8) {
-                    ContentWidthSlider(
-                        cmValue: $maxContentWidthCm,
-                        usesImperial: usesImperial,
-                        displayRange: displayRange,
-                        snapDisplayValue: snapDisplayValue
-                    )
-                    .frame(width: 200, height: 20)
-
-                    // Field width is sized so its stepper's chevrons line up
-                    // vertically with the font rows' steppers (slider 200 + two
-                    // 8-pt gaps + field == 240, the font rows' label width).
-                    TextField("", value: displayValueBinding,
-                              format: .number.precision(.fractionLength(1)))
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 32)
-                    Stepper("", value: displayValueBinding,
-                            in: displayRange, step: stepSize)
-                        .labelsHidden()
-                    // Clickable unit toggle styled exactly like a plain label —
-                    // .plain strips all button chrome so only the text shows.
-                    Button(action: toggleUnit) { Text(unitLabel) }
-                        .buttonStyle(.plain)
-                        .help(tr("Switch between centimetres and inches", "在厘米和英寸之间切换"))
-                }
-                .onChange(of: maxContentWidthCm) { applyContentWidthToOpenDocuments() }
-            }
-
-            GridRow {
-                Divider().gridCellColumns(2)
-            }
-
-            GridRow {
-                Text(tr("Western font:", "西文字体："))
-                    .gridColumnAlignment(.trailing)
-                VStack(alignment: .leading, spacing: 6) {
-                    fontRow(summary: fonts.usesSystemFont
-                                ? "\(tr("System Font", "系统字体")) (\(fonts.systemWesternName))  \(Int(round(fonts.standardFont.pointSize)))"
-                                : fonts.standardSummary,
-                            font: fonts.standardFont,
-                            antialias: fonts.antialias,
-                            size: Binding(get: { Double(fonts.standardFont.pointSize) },
-                                          set: { fonts.setStandardSize(CGFloat($0)) }),
-                            select: fonts.selectStandardFont,
-                            useSystem: fonts.useSystemFont,
-                            isUsingSystem: fonts.usesSystemFont)
-                    HStack(spacing: 16) {
-                        Toggle(tr("Antialias", "抗锯齿"), isOn: $fonts.antialias)
-                        Toggle(tr("Ligatures", "连字"), isOn: $fonts.standardLigatures)
+        SettingsPage(
+            title: tr("Appearance", "外观"),
+            subtitle: tr(
+                "Adjust the reading column and typography across edit and read modes.",
+                "调整编辑与阅读模式共用的内容宽度和字体排版。"
+            )
+        ) {
+            SettingsCard(tr("Window & Content", "窗口与内容"), symbol: "circle.lefthalf.filled") {
+                LabeledContent(tr("Appearance", "外观")) {
+                    Picker("", selection: $appearanceMode) {
+                        ForEach(AppSettings.AppearanceMode.displayOrder) { Text($0.label).tag($0) }
                     }
+                    .pickerStyle(.radioGroup)
+                    .horizontalRadioGroupLayout()
+                    .labelsHidden()
+                    .onChange(of: appearanceMode) { AppSettings.applyAppearance() }
                 }
-            }
 
-            GridRow {
-                Text(tr("Chinese font:", "中文字体："))
-                    .gridColumnAlignment(.trailing)
-                fontRow(summary: fonts.usesSystemCJKFont
-                            ? "\(tr("System Font", "系统字体")) (\(fonts.systemCJKName))  \(Int(round(fonts.cjkFont.pointSize)))"
-                            : fonts.cjkSummary,
-                        font: fonts.cjkFont,
-                        antialias: fonts.antialias,
-                        size: Binding(get: { Double(fonts.standardFont.pointSize) },
-                                      set: { fonts.setStandardSize(CGFloat($0)) }),
-                        select: fonts.selectCJKFont,
-                        useSystem: fonts.useSystemCJKFont,
-                        isUsingSystem: fonts.usesSystemCJKFont,
-                        showsSizeStepper: false)
-            }
+                LabeledContent(tr("Max content width", "最大内容宽度")) {
+                    HStack(spacing: 8) {
+                        ContentWidthSlider(
+                            cmValue: $maxContentWidthCm,
+                            usesImperial: usesImperial,
+                            displayRange: displayRange,
+                            snapDisplayValue: snapDisplayValue
+                        )
+                        .frame(minWidth: 140, maxWidth: 220, minHeight: 20)
 
-            GridRow {
-                Text(tr("Monospaced font:", "等宽字体："))
-                    .gridColumnAlignment(.trailing)
-                VStack(alignment: .leading, spacing: 6) {
-                    fontRow(summary: fonts.monospaceSummary,
-                            font: fonts.monospaceFont,
-                            antialias: fonts.antialias,
-                            size: Binding(get: { Double(fonts.monospaceFont.pointSize) },
-                                          set: { fonts.setMonospaceSize(CGFloat($0)) }),
-                            select: fonts.selectMonospaceFont)
-                    HStack(spacing: 16) {
-                        Toggle(tr("Antialias", "抗锯齿"), isOn: $fonts.antialias)
-                        Toggle(tr("Ligatures", "连字"), isOn: $fonts.monospaceLigatures)
+                        TextField("", value: displayValueBinding,
+                                  format: .number.precision(.fractionLength(1)))
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 38)
+                        Stepper("", value: displayValueBinding,
+                                in: displayRange, step: stepSize)
+                            .labelsHidden()
+                        Button(action: toggleUnit) { Text(unitLabel) }
+                            .buttonStyle(.plain)
+                            .help(tr("Switch between centimetres and inches", "在厘米和英寸之间切换"))
                     }
+                    .onChange(of: maxContentWidthCm) { applyContentWidthToOpenDocuments() }
                 }
             }
 
-            GridRow {
-                Text(tr("Line height:", "行高："))
-                    .gridColumnAlignment(.trailing)
-                HStack(spacing: 6) {
-                    let lineHeight = Binding(get: { Double(fonts.lineHeight) },
-                                             set: { fonts.setLineHeight(CGFloat($0)) })
-                    TextField("", value: lineHeight, format: .number.precision(.fractionLength(1)))
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 56)
-                    Stepper("", value: lineHeight, in: 1...3, step: 0.1)
-                        .labelsHidden()
-                    Text(tr("times", "倍"))
+            SettingsCard(tr("Typography", "字体排版"), symbol: "textformat") {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(tr("Western font", "西文字体"))
+                            .font(.subheadline.weight(.medium))
+                        fontRow(summary: fonts.usesSystemFont
+                                    ? "\(tr("System Font", "系统字体")) (\(fonts.systemWesternName))  \(Int(round(fonts.standardFont.pointSize)))"
+                                    : fonts.standardSummary,
+                                font: fonts.standardFont,
+                                antialias: fonts.antialias,
+                                size: Binding(get: { Double(fonts.standardFont.pointSize) },
+                                              set: { fonts.setStandardSize(CGFloat($0)) }),
+                                select: fonts.selectStandardFont,
+                                useSystem: fonts.useSystemFont,
+                                isUsingSystem: fonts.usesSystemFont)
+                        HStack(spacing: 16) {
+                            Toggle(tr("Antialias", "抗锯齿"), isOn: $fonts.antialias)
+                            Toggle(tr("Ligatures", "连字"), isOn: $fonts.standardLigatures)
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(tr("Chinese font", "中文字体"))
+                            .font(.subheadline.weight(.medium))
+                        fontRow(summary: fonts.usesSystemCJKFont
+                                    ? "\(tr("System Font", "系统字体")) (\(fonts.systemCJKName))  \(Int(round(fonts.cjkFont.pointSize)))"
+                                    : fonts.cjkSummary,
+                                font: fonts.cjkFont,
+                                antialias: fonts.antialias,
+                                size: Binding(get: { Double(fonts.standardFont.pointSize) },
+                                              set: { fonts.setStandardSize(CGFloat($0)) }),
+                                select: fonts.selectCJKFont,
+                                useSystem: fonts.useSystemCJKFont,
+                                isUsingSystem: fonts.usesSystemCJKFont,
+                                showsSizeStepper: false)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(tr("Monospaced font", "等宽字体"))
+                            .font(.subheadline.weight(.medium))
+                        fontRow(summary: fonts.monospaceSummary,
+                                font: fonts.monospaceFont,
+                                antialias: fonts.antialias,
+                                size: Binding(get: { Double(fonts.monospaceFont.pointSize) },
+                                              set: { fonts.setMonospaceSize(CGFloat($0)) }),
+                                select: fonts.selectMonospaceFont)
+                        HStack(spacing: 16) {
+                            Toggle(tr("Antialias", "抗锯齿"), isOn: $fonts.antialias)
+                            Toggle(tr("Ligatures", "连字"), isOn: $fonts.monospaceLigatures)
+                        }
+                    }
+
+                    Divider()
+
+                    LabeledContent(tr("Line height", "行高")) {
+                        HStack(spacing: 6) {
+                            let lineHeight = Binding(get: { Double(fonts.lineHeight) },
+                                                     set: { fonts.setLineHeight(CGFloat($0)) })
+                            TextField("", value: lineHeight, format: .number.precision(.fractionLength(1)))
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 56)
+                            Stepper("", value: lineHeight, in: 1...3, step: 0.1)
+                                .labelsHidden()
+                            Text(tr("times", "倍"))
+                        }
+                    }
                 }
             }
         }
-        .settingsPanePadding()
     }
 
     /// Pushes a content-width change to every open editor live, converting cm

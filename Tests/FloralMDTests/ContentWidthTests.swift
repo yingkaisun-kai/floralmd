@@ -8,7 +8,7 @@ import AppKit
 @MainActor
 struct ContentWidthTests {
 
-    let base = EditorTextView.contentBaseInset      // 24
+    let base = EditorTextView.contentBaseInset      // 44
 
     @Test("Window narrower than cap fills (base inset only)")
     func narrowFills() {

@@ -12,7 +12,7 @@ import AppKit
 extension EditorTextView {
 
     /// Padding applied on each side of the text column at all window sizes.
-    static let contentBaseInset: CGFloat = 24
+    static let contentBaseInset: CGFloat = 44
 
     /// The symmetric horizontal inset for a given view width and max-column width.
     /// `maxContentWidth == .greatestFiniteMagnitude` → base inset only (fills the window).

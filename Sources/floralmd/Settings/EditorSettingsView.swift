@@ -12,10 +12,14 @@ struct EditorSettingsView: View {
     }
 
     var body: some View {
-        Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 18) {
-            GridRow {
-                Text(tr("Editing:", "编辑："))
-                    .gridColumnAlignment(.trailing)
+        SettingsPage(
+            title: tr("Editor", "编辑器"),
+            subtitle: tr(
+                "Tune the editing experience without changing your Markdown source.",
+                "调整编辑体验，不改变 Markdown 源文内容。"
+            )
+        ) {
+            SettingsCard(tr("Editing", "编辑"), symbol: "text.cursor") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle(tr("Typewriter scroll", "打字机滚动"), isOn: $typewriterMode)
                         .onChange(of: typewriterMode) {
@@ -23,19 +27,12 @@ struct EditorSettingsView: View {
                         }
                     Text(tr("Keeps the insertion point vertically centred while typing.",
                             "输入时让插入点保持在窗口的垂直中央。"))
-                        .foregroundStyle(.secondary)
-                        .controlSize(.small)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(width: 360, alignment: .leading)
+                        .settingsSupportingText()
                         .padding(.leading, 20)
                 }
             }
 
-            GridRow { Divider().gridCellColumns(2) }
-
-            GridRow {
-                Text(tr("Presentation:", "显示："))
-                    .gridColumnAlignment(.trailing)
+            SettingsCard(tr("Presentation", "显示"), symbol: "rectangle.on.rectangle") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle(tr("Show source in editor", "在编辑器中显示源码"), isOn: $sourceMode)
                         .onChange(of: sourceMode) {
@@ -48,6 +45,5 @@ struct EditorSettingsView: View {
                 }
             }
         }
-        .settingsPanePadding()
     }
 }

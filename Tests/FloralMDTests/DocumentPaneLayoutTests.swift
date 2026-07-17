@@ -43,6 +43,10 @@ struct DocumentPaneLayoutTests {
         #expect(layout.statusFrame.width == layout.editorFrame.width)
         #expect(layout.readFrame.width == layout.editorFrame.width + layout.minimapFrame.width)
         #expect(layout.readFrame.maxX == 900)
+        #expect(layout.outlineControlFrame.minX
+            == layout.editorFrame.minX + DocumentPaneLayout.documentControlInset)
+        #expect(layout.outlineControlFrame.maxY
+            == 500 - DocumentPaneLayout.documentControlInset)
     }
 
     @Test("Collapsed sidebars reserve no content rail with or without a minimap")
@@ -60,6 +64,10 @@ struct DocumentPaneLayoutTests {
             #expect(layout.outlineSidebarFrame == NSRect(x: 0, y: 0,
                                                          width: 0, height: 560))
             #expect(layout.editorFrame.maxX + layout.minimapFrame.width == contentSize.width)
+            #expect(layout.outlineControlFrame.size == NSSize(
+                width: DocumentPaneLayout.documentControlSize,
+                height: DocumentPaneLayout.documentControlSize
+            ))
         }
     }
 
@@ -77,5 +85,7 @@ struct DocumentPaneLayoutTests {
                                                      width: 0, height: 500))
         #expect(layout.editorFrame.minX == 230)
         #expect(layout.editorFrame.maxX == 900)
+        #expect(layout.outlineControlFrame.minX
+            == 230 + DocumentPaneLayout.documentControlInset)
     }
 }

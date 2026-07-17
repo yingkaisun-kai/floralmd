@@ -1,110 +1,219 @@
 // SettingsWindowController — the Settings window.
 //
-// Built on NSTabViewController (`.toolbar` style), which provides the native
-// preference toolbar, pane selection, and per-pane window sizing. Each pane is a
-// SwiftUI view hosted in an NSHostingController. Pane switching mirrors
-// CotEditor: hide the content, animate the window resize, then reveal it.
+// The window uses an AppKit split-view shell so navigation remains fixed while
+// each existing SwiftUI settings pane keeps ownership of its bindings and
+// side effects. Pane hosting controllers are cached: switching sections does
+// not reset transient state such as shortcut search or an open sheet.
 
 import AppKit
+import FloralMDCore
 import SwiftUI
 
 final class SettingsWindowController: NSWindowController {
     convenience init() {
-        let tabController = SettingsTabViewController()
-        let window = NSWindow(contentViewController: tabController)
-        window.styleMask = [.titled, .closable]
+        let contentController = SettingsContainerViewController()
+        let window = NSWindow(contentViewController: contentController)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.title = AppCopy.text("Settings", "设置")
-        window.toolbarStyle = .preference
+        window.setContentSize(NSSize(
+            width: SettingsWindowLayout.defaultWidth,
+            height: SettingsWindowLayout.defaultHeight
+        ))
+        window.minSize = NSSize(
+            width: SettingsWindowLayout.minimumWidth,
+            height: SettingsWindowLayout.minimumHeight
+        )
         window.center()
         window.isReleasedWhenClosed = false
         self.init(window: window)
     }
 }
 
-/// Hosts the Settings panes as toolbar tabs and animates the window resize on
-/// each switch.
-final class SettingsTabViewController: NSTabViewController {
-    /// Owns the editor font / line-height state and the font-panel plumbing.
-    private let fonts = FontSettings()
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        tabStyle = .toolbar
-        // The window title follows this controller's title; keep it "Settings"
-        // (NSTabViewController otherwise blanks it to the selected pane's nil title
-        // on each switch, showing "Untitled").
-        title = AppCopy.text("Settings", "设置")
-
-        addPane(GeneralSettingsView(), label: AppCopy.text("General", "通用"), symbol: "gearshape")
-        addPane(EditorSettingsView(), label: AppCopy.text("Editor", "编辑器"), symbol: "text.cursor")
-        addPane(ShortcutsSettingsView(), label: AppCopy.text("Shortcuts", "快捷键"), symbol: "keyboard")
-        addPane(AppearanceSettingsView(fonts: fonts), label: AppCopy.text("Appearance", "外观"), symbol: "eyeglasses")
-        addPane(AdvancedSettingsView(), label: AppCopy.text("Advanced", "高级"), symbol: "gearshape.2")
-        NotificationCenter.default.addObserver(self, selector: #selector(refreshLanguage),
-                                               name: .appLanguageDidChange, object: nil)
-    }
-
-    private func addPane(_ view: some View, label: String, symbol: String) {
-        let hosting = NSHostingController(rootView: view)
-        // Report a definite size so the tab controller can size the window to it.
-        hosting.sizingOptions = [.preferredContentSize]
-        let item = NSTabViewItem(viewController: hosting)
-        item.label = label
-        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
-        addTabViewItem(item)
-    }
-
-    override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
-        super.tabView(tabView, didSelect: tabViewItem)
-        title = AppCopy.text("Settings", "设置")
-        guard let tabViewItem else { return }
-        switchPane(to: tabViewItem)
-    }
-
-    @objc private func refreshLanguage() {
-        let labels = [AppCopy.text("General", "通用"),
-                      AppCopy.text("Editor", "编辑器"),
-                      AppCopy.text("Shortcuts", "快捷键"),
-                      AppCopy.text("Appearance", "外观"),
-                      AppCopy.text("Advanced", "高级")]
-        for (item, label) in zip(tabViewItems, labels) {
-            item.label = label
-            item.image?.accessibilityDescription = label
+private extension SettingsPaneID {
+    var label: String {
+        switch self {
+        case .general: AppCopy.text("General", "通用")
+        case .editor: AppCopy.text("Editor", "编辑器")
+        case .shortcuts: AppCopy.text("Shortcuts", "快捷键")
+        case .appearance: AppCopy.text("Appearance", "外观")
+        case .advanced: AppCopy.text("Advanced", "高级")
         }
-        title = AppCopy.text("Settings", "设置")
-        view.window?.title = AppCopy.text("Settings", "设置")
     }
 
-    /// Resize the window to fit the newly selected pane, keeping the top-left
-    /// fixed. The content is hidden during the resize so nothing stretches
-    /// mid-animation, then revealed once the window is at its final size.
-    private func switchPane(to tabViewItem: NSTabViewItem) {
-        guard let window = view.window,
-              let contentSize = tabViewItem.view?.frame.size else { return }
-
-        let frame = window.frameRect(forContentSize: contentSize)
-
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            window.setFrame(frame, display: true)
-            return
-        }
-
-        view.isHidden = true
-        NSAnimationContext.runAnimationGroup { context in
-            context.allowsImplicitAnimation = true
-            context.duration = window.animationResizeTime(frame)
-            window.setFrame(frame, display: true)
-        } completionHandler: { [weak self] in
-            self?.view.isHidden = false
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .editor: "text.cursor"
+        case .shortcuts: "keyboard"
+        case .appearance: "eyeglasses"
+        case .advanced: "gearshape.2"
         }
     }
 }
 
-private extension NSWindow {
-    /// The window frame for the given content size, keeping the top-left fixed.
-    func frameRect(forContentSize contentSize: NSSize) -> NSRect {
-        let frameSize = frameRect(forContentRect: NSRect(origin: .zero, size: contentSize)).size
-        return NSRect(origin: frame.origin, size: frameSize)
-            .offsetBy(dx: 0, dy: frame.height - frameSize.height)
+private final class SettingsContainerViewController: NSSplitViewController {
+    private let sidebarController = SettingsSidebarViewController()
+    private let detailController = SettingsDetailViewController()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+
+        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarController)
+        sidebarItem.canCollapse = false
+        sidebarItem.minimumThickness = SettingsWindowLayout.minimumSidebarWidth
+        sidebarItem.maximumThickness = SettingsWindowLayout.maximumSidebarWidth
+        sidebarItem.preferredThicknessFraction = 0.22
+        addSplitViewItem(sidebarItem)
+
+        let detailItem = NSSplitViewItem(viewController: detailController)
+        detailItem.minimumThickness = SettingsWindowLayout.minimumDetailWidth
+        addSplitViewItem(detailItem)
+
+        sidebarController.onSelection = { [weak self] pane in
+            self?.detailController.show(pane)
+        }
+        sidebarController.select(.general)
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(refreshLanguage),
+            name: .appLanguageDidChange,
+            object: nil
+        )
+    }
+
+    @objc private func refreshLanguage() {
+        sidebarController.refreshLanguage()
+        view.window?.title = AppCopy.text("Settings", "设置")
+    }
+}
+
+private final class SettingsSidebarViewController: NSViewController,
+                                                   NSTableViewDataSource,
+                                                   NSTableViewDelegate {
+    var onSelection: ((SettingsPaneID) -> Void)?
+
+    private let tableView = NSTableView()
+    private let panes = SettingsPaneID.allCases
+
+    override func loadView() {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("settingsPane"))
+        column.resizingMask = .autoresizingMask
+        tableView.addTableColumn(column)
+        tableView.headerView = nil
+        tableView.rowHeight = 34
+        tableView.style = .sourceList
+        tableView.selectionHighlightStyle = .regular
+        tableView.allowsEmptySelection = false
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.setAccessibilityLabel(AppCopy.text("Settings sections", "设置分区"))
+        scrollView.documentView = tableView
+
+        view = scrollView
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        panes.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let pane = panes[row]
+        let identifier = NSUserInterfaceItemIdentifier("SettingsSidebarCell")
+        let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView)
+            ?? makeCell(identifier: identifier)
+        cell.textField?.stringValue = pane.label
+        cell.imageView?.image = NSImage(
+            systemSymbolName: pane.symbol,
+            accessibilityDescription: pane.label
+        )
+        cell.setAccessibilityLabel(pane.label)
+        return cell
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard panes.indices.contains(tableView.selectedRow) else { return }
+        onSelection?(panes[tableView.selectedRow])
+    }
+
+    func select(_ pane: SettingsPaneID) {
+        guard let row = panes.firstIndex(of: pane) else { return }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
+        onSelection?(pane)
+    }
+
+    func refreshLanguage() {
+        tableView.setAccessibilityLabel(AppCopy.text("Settings sections", "设置分区"))
+        tableView.reloadData()
+    }
+
+    private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
+        let cell = NSTableCellView()
+        cell.identifier = identifier
+
+        let imageView = NSImageView()
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+        cell.imageView = imageView
+        cell.addSubview(imageView)
+
+        let textField = NSTextField(labelWithString: "")
+        textField.translatesAutoresizingMaskIntoConstraints = false
+        textField.lineBreakMode = .byTruncatingTail
+        cell.textField = textField
+        cell.addSubview(textField)
+
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            imageView.widthAnchor.constraint(equalToConstant: 18),
+            imageView.heightAnchor.constraint(equalToConstant: 18),
+            textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
+            textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+            textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+}
+
+private final class SettingsDetailViewController: NSViewController {
+    /// Owns the editor font / line-height state and the font-panel plumbing.
+    private let fonts = FontSettings()
+    private lazy var controllers: [SettingsPaneID: NSViewController] = [
+        .general: NSHostingController(rootView: GeneralSettingsView()),
+        .editor: NSHostingController(rootView: EditorSettingsView()),
+        .shortcuts: NSHostingController(rootView: ShortcutsSettingsView()),
+        .appearance: NSHostingController(rootView: AppearanceSettingsView(fonts: fonts)),
+        .advanced: NSHostingController(rootView: AdvancedSettingsView()),
+    ]
+    private weak var visibleController: NSViewController?
+
+    override func loadView() {
+        view = NSView()
+    }
+
+    func show(_ pane: SettingsPaneID) {
+        guard let controller = controllers[pane], controller !== visibleController else { return }
+        visibleController?.view.removeFromSuperview()
+        visibleController?.removeFromParent()
+
+        addChild(controller)
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(controller.view)
+        NSLayoutConstraint.activate([
+            controller.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: view.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        visibleController = controller
     }
 }

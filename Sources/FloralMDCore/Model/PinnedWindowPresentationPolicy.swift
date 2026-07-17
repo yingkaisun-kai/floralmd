@@ -75,15 +75,28 @@ public enum PinnedWindowPresentationPolicy {
                 actsAsPrimaryWindow: true
             )
         case .allSpaces:
+            // The ordinary NSDocument window stays a primary window while its
+            // content is hosted by the dedicated auxiliary panel.
             WindowPinningPresentation(
-                floatsAboveNormalWindows: true,
-                joinsAllSpaces: true,
-                joinsAllApplications: true,
-                actsAsFullScreenAuxiliary: true,
-                actsAsPrimaryWindow: false
+                floatsAboveNormalWindows: false,
+                joinsAllSpaces: false,
+                joinsAllApplications: false,
+                actsAsFullScreenAuxiliary: false,
+                actsAsPrimaryWindow: true
             )
         }
     }
+
+    /// A regular document window does not acquire another app's native
+    /// full-screen auxiliary role from collection flags alone. The proven host
+    /// is a nonactivating NSPanel using exactly these two collection behaviors.
+    public static let allSpacesAuxiliaryPresentation = WindowPinningPresentation(
+        floatsAboveNormalWindows: true,
+        joinsAllSpaces: true,
+        joinsAllApplications: false,
+        actsAsFullScreenAuxiliary: true,
+        actsAsPrimaryWindow: false
+    )
 
     /// Quick Capture must always return as a pinned entry surface, but reusing
     /// one that the user promoted to All Spaces must not silently downgrade it.

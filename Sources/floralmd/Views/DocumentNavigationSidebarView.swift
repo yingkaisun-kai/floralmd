@@ -6,9 +6,9 @@ import FloralMDCore
 final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
     NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
 
-    static let expandedWidth: CGFloat = 230
+    static let expandedWidth: CGFloat = 248
     static let collapsedWidth: CGFloat = 0
-    private static let modeControlWidth: CGFloat = expandedWidth - 20
+    private static let modeControlWidth: CGFloat = expandedWidth - 28
 
     private enum Mode { case files, git }
     private struct FileTreeRow {
@@ -85,7 +85,7 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.style = .plain
-        tableView.rowHeight = 26
+        tableView.rowHeight = 30
         tableView.dataSource = self
         tableView.delegate = self
         tableView.target = self
@@ -109,19 +109,19 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
             separator.topAnchor.constraint(equalTo: topAnchor),
             separator.bottomAnchor.constraint(equalTo: bottomAnchor),
             separator.widthAnchor.constraint(equalToConstant: 1),
-            modeControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            modeControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             // Keep the segmented control at its expanded width while the sidebar
             // collapses. Compressing NSSegmentedControl to zero makes its segment
             // widths stick in a corrupted arrangement after the sidebar reopens.
             modeControl.widthAnchor.constraint(equalToConstant: Self.modeControlWidth),
-            modeControl.topAnchor.constraint(equalTo: topAnchor, constant: 9),
-            modeControl.heightAnchor.constraint(equalToConstant: 24),
-            locationLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            locationLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            locationLabel.topAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: 8),
+            modeControl.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            modeControl.heightAnchor.constraint(equalToConstant: 28),
+            locationLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            locationLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            locationLabel.topAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: 10),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: locationLabel.bottomAnchor, constant: 5),
+            scrollView.topAnchor.constraint(equalTo: locationLabel.bottomAnchor, constant: 8),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(refreshLanguage),

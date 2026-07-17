@@ -12,6 +12,38 @@ categories. Language is never marked with inline bold labels.
 
 ## [Unreleased]
 
+## [2026.7.4] — 2026-07-17
+
+### 中文
+
+#### 变更
+- 重新整理窗口、标题栏、文件侧边栏与大纲的视觉层级，使用更明亮、稳定的冷中性色表面和更清晰的分隔线；设置窗口现在采用固定分类侧栏与可滚动卡片布局，切换分类和调整窗口大小更加稳定。
+
+#### 修复
+- 修复“所有 Space”模式无法可靠进入其他 App 原生全屏 Space 的问题；置顶文档现在使用可复用的辅助面板承载原有编辑内容，并保持窗口位置、标签页、选区、撤销和输入法状态。
+- 修复在“所有 Space”模式下从文件侧边栏连续打开多个标签页时可能出现的停顿和空白过渡；新标签页现在会增量接入并提前准备，已有标签页不会重复重建。
+- 修复应用图标圆角外区域在 Finder、Quick Look 和 DMG 中显示为不透明方块的问题，并在构建时校验透明通道。
+
+### English
+
+#### Changed
+- Refined the visual hierarchy across the window, titlebar, file sidebar,
+  and outline with brighter, stable cool-neutral surfaces and clearer
+  separators. Settings now uses a fixed category sidebar with scrollable
+  cards, keeping category changes and window resizing stable.
+
+#### Fixed
+- Fixed All Spaces mode failing to reliably appear in other apps' native
+  full-screen Spaces. Pinned documents now use reusable auxiliary panels that
+  retain the existing editor content, window position, tabs, selection, undo,
+  and input-method state.
+- Fixed pauses and blank transitions when opening several sidebar files as
+  tabs in All Spaces mode. New tabs now join incrementally and prewarm without
+  rebuilding existing tabs.
+- Fixed the area outside the app icon's rounded shape appearing as an opaque
+  square in Finder, Quick Look, and DMGs, with alpha-channel validation added
+  to the build.
+
 ## [2026.7.3] — 2026-07-17
 
 ### 中文

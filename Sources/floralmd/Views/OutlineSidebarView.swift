@@ -12,6 +12,7 @@ final class OutlineSidebarView: NSView, NSTableViewDataSource, NSTableViewDelega
     private let separator = QuietSidebarSeparatorView()
     private let header = NSStackView()
     private let titleLabel = NSTextField(labelWithString: AppCopy.text("Outline", "大纲"))
+    private let collapseButton = NSButton()
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
     private var items: [MarkdownOutlineItem] = []
@@ -26,6 +27,7 @@ final class OutlineSidebarView: NSView, NSTableViewDataSource, NSTableViewDelega
 
     var onSelectHeading: ((String) -> Void)?
     var onWidthChange: ((CGFloat, TimeInterval) -> Void)?
+    var onCollapseRequest: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -38,10 +40,27 @@ final class OutlineSidebarView: NSView, NSTableViewDataSource, NSTableViewDelega
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.textColor = .secondaryLabelColor
 
+        collapseButton.bezelStyle = .accessoryBarAction
+        collapseButton.isBordered = false
+        collapseButton.imagePosition = .imageOnly
+        collapseButton.contentTintColor = .secondaryLabelColor
+        collapseButton.target = self
+        collapseButton.action = #selector(requestCollapse(_:))
+        collapseButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            collapseButton.widthAnchor.constraint(
+                equalToConstant: DocumentPaneLayout.documentControlSize
+            ),
+            collapseButton.heightAnchor.constraint(
+                equalToConstant: DocumentPaneLayout.documentControlSize
+            ),
+        ])
+
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = 8
         header.translatesAutoresizingMaskIntoConstraints = false
+        header.addArrangedSubview(collapseButton)
         header.addArrangedSubview(titleLabel)
         header.addArrangedSubview(NSView())
 
@@ -51,8 +70,8 @@ final class OutlineSidebarView: NSView, NSTableViewDataSource, NSTableViewDelega
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.style = .plain
-        tableView.rowHeight = 29
-        tableView.intercellSpacing = NSSize(width: 0, height: 2)
+        tableView.rowHeight = 32
+        tableView.intercellSpacing = NSSize(width: 0, height: 3)
         tableView.dataSource = self
         tableView.delegate = self
         tableView.target = self
@@ -75,15 +94,23 @@ final class OutlineSidebarView: NSView, NSTableViewDataSource, NSTableViewDelega
             drawerBackground.topAnchor.constraint(equalTo: topAnchor),
             drawerBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            header.leadingAnchor.constraint(equalTo: drawerBackground.leadingAnchor, constant: 12),
-            header.trailingAnchor.constraint(equalTo: drawerBackground.trailingAnchor, constant: -12),
-            header.topAnchor.constraint(equalTo: drawerBackground.topAnchor, constant: 13),
-            header.heightAnchor.constraint(equalToConstant: 30),
+            header.leadingAnchor.constraint(
+                equalTo: drawerBackground.leadingAnchor,
+                constant: DocumentPaneLayout.documentControlInset
+            ),
+            header.trailingAnchor.constraint(equalTo: drawerBackground.trailingAnchor, constant: -14),
+            header.topAnchor.constraint(
+                equalTo: drawerBackground.topAnchor,
+                constant: DocumentPaneLayout.documentControlInset
+            ),
+            header.heightAnchor.constraint(
+                equalToConstant: DocumentPaneLayout.documentControlSize
+            ),
 
-            scrollView.leadingAnchor.constraint(equalTo: drawerBackground.leadingAnchor, constant: 12),
-            scrollView.trailingAnchor.constraint(equalTo: drawerBackground.trailingAnchor, constant: -10),
-            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
-            scrollView.bottomAnchor.constraint(equalTo: drawerBackground.bottomAnchor, constant: -8),
+            scrollView.leadingAnchor.constraint(equalTo: drawerBackground.leadingAnchor, constant: 16),
+            scrollView.trailingAnchor.constraint(equalTo: drawerBackground.trailingAnchor, constant: -14),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 14),
+            scrollView.bottomAnchor.constraint(equalTo: drawerBackground.bottomAnchor, constant: -12),
 
             separator.trailingAnchor.constraint(equalTo: drawerBackground.trailingAnchor),
             separator.topAnchor.constraint(equalTo: drawerBackground.topAnchor),
@@ -92,6 +119,7 @@ final class OutlineSidebarView: NSView, NSTableViewDataSource, NSTableViewDelega
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(refreshLanguage),
                                                name: .appLanguageDidChange, object: nil)
+        refreshLocalizedControls()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -171,7 +199,22 @@ final class OutlineSidebarView: NSView, NSTableViewDataSource, NSTableViewDelega
     }
 
     @objc private func refreshLanguage() {
+        refreshLocalizedControls()
+    }
+
+    private func refreshLocalizedControls() {
         titleLabel.stringValue = AppCopy.text("Outline", "大纲")
+        let description = AppCopy.text("Collapse outline", "收起大纲")
+        collapseButton.image = NSImage(
+            systemSymbolName: "chevron.left",
+            accessibilityDescription: description
+        )?.withSymbolConfiguration(.init(pointSize: 13, weight: .medium))
+        collapseButton.toolTip = description
+        collapseButton.setAccessibilityLabel(description)
+    }
+
+    @objc private func requestCollapse(_ sender: Any?) {
+        onCollapseRequest?()
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
@@ -222,5 +265,69 @@ final class OutlineSidebarView: NSView, NSTableViewDataSource, NSTableViewDelega
         let row = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
         guard items.indices.contains(row) else { return }
         onSelectHeading?(items[row].title)
+    }
+}
+
+/// A document-level control that stays fixed in the editor margin while the
+/// text scrolls underneath. It is a sibling of NSTextView, never text content.
+final class OutlineFloatingButton: NSButton {
+    private var isHovered = false
+    private var hoverTrackingArea: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        bezelStyle = .accessoryBarAction
+        isBordered = false
+        imagePosition = .imageOnly
+        contentTintColor = .secondaryLabelColor
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let base = isDark
+            ? NSColor(srgbRed: 0.16, green: 0.16, blue: 0.155, alpha: 0.94)
+            : NSColor(srgbRed: 0.995, green: 0.995, blue: 0.99, alpha: 0.96)
+        let hover = isDark
+            ? NSColor(srgbRed: 0.21, green: 0.21, blue: 0.205, alpha: 0.96)
+            : NSColor(srgbRed: 0.96, green: 0.96, blue: 0.95, alpha: 0.98)
+        layer?.backgroundColor = (isHovered ? hover : base).cgColor
+        layer?.cornerRadius = 9
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.10).cgColor
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = isDark ? 0.26 : 0.12
+        layer?.shadowRadius = 9
+        layer?.shadowOffset = CGSize(width: 0, height: -2)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseEnteredAndExited, .activeInKeyWindow],
+                                  owner: self,
+                                  userInfo: nil)
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
     }
 }

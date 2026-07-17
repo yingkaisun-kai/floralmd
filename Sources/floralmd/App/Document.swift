@@ -18,7 +18,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     private var minimapView: DocumentMinimapView!
     private var viewModeButton: NSButton?
     private var sidebarControlsAccessory: NSTitlebarAccessoryViewController?
-    private var outlineSidebarButton: NSButton?
+    private var outlineFloatingButton: OutlineFloatingButton!
     private var navigationSidebarButton: NSButton?
     private var windowPinningButton: NSButton?
     private static let viewModeItemID = NSToolbarItem.Identifier("viewMode")
@@ -37,6 +37,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     private var readView: ReadModeWebView?
     private var gitBaseline: GitFileBaseline?
     private var usesTranslucentPinnedWindowBackground = false
+    private var allSpacesPinnedPanelController: AllSpacesPinnedPanelController?
 
     /// Content loaded from disk before the editor window exists.
     /// `nonisolated(unsafe)` because `read(from:ofType:)` may be called
@@ -236,8 +237,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         // full window frame at the end of setup (below), once the toolbar is in
         // place — so the frame round-trips exactly and doesn't drift by the
         // title bar + toolbar height each time.
-        let windowWidth: CGFloat = 800
-        let windowHeight: CGFloat = 560
+        let windowWidth: CGFloat = 900
+        let windowHeight: CGFloat = 620
 
         let window = DocumentWindow(
             contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
@@ -245,8 +246,11 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             backing: .buffered,
             defer: false
         )
+        window.prepareForOwnFullScreen = { [weak self] in
+            self?.dismissAllSpacesPinnedPanel(restoringDocumentWindow: true)
+        }
         window.titleVisibility = .visible
-        window.titlebarAppearsTransparent = false
+        window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.applyPinningPresentation()
         // A compact capture is a transient entry surface, not another tab in a
@@ -276,7 +280,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         editor.usesFindPanel = true
         editor.isIncrementalSearchingEnabled = true
         editor.autoresizingMask = [.width]
-        editor.textContainerInset = NSSize(width: 24, height: 18)
+        editor.textContainerInset = NSSize(width: 44, height: 30)
         // Centered reading column (see EditorTextView+ContentWidth). Convert the
         // persisted cm value to points using the main screen PPI at window-creation
         // time; recomputed on resize (setFrameSize) and when the window moves to a
@@ -298,7 +302,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         toolbar.autosavesConfiguration = true   // persists layout per "MainToolbar"
         window.toolbar = toolbar
         window.toolbarStyle = .unified
-        window.titlebarSeparatorStyle = .line
+        window.titlebarSeparatorStyle = .none
         installSidebarControlsAccessory(in: window)
 
         // Wire the window's secondary-click interception now that the toolbar has
@@ -376,6 +380,9 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         outlineSidebar.onSelectHeading = { [weak self] heading in
             self?.editor.scrollToHeading(heading)
         }
+        outlineSidebar.onCollapseRequest = { [weak self] in
+            self?.toggleOutlineSidebar(nil)
+        }
         outlineSidebar.onWidthChange = { [weak self] width, duration in
             guard let self else { return }
             self.sidebarSessionState.setOutlineExpanded(
@@ -388,11 +395,24 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         }
         containerView.addSubview(outlineSidebar)
         outlineSidebar.installConstraints(in: containerView, leadingOffset: navigationWidth)
+        outlineFloatingButton = OutlineFloatingButton(frame: initialLayout.outlineControlFrame)
+        outlineFloatingButton.target = self
+        outlineFloatingButton.action = #selector(toggleOutlineSidebar(_:))
+        containerView.addSubview(outlineFloatingButton)
+        let surfaceSeparator = DocumentSurfaceSeparatorView(
+            frame: NSRect(x: 0, y: contentBounds.height - 1,
+                          width: contentBounds.width, height: 1)
+        )
+        surfaceSeparator.autoresizingMask = [.width, .minYMargin]
+        containerView.addSubview(surfaceSeparator)
         // This is a one-time window-session default. Later refreshes never
         // reapply it, so either sidebar stays open after the user expands it.
         outlineSidebar.setExpanded(sidebarSessionState.isOutlineExpanded, animated: false)
         navigationSidebar.setExpanded(sidebarSessionState.isNavigationExpanded, animated: false)
 
+        (containerView as? DocumentContainerView)?.onAppearanceChange = { [weak self] in
+            self?.refreshPinnedWindowPresentation()
+        }
         window.contentView = containerView
 
         NotificationCenter.default.addObserver(
@@ -511,6 +531,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             minimapView.animator().frame = layout.minimapFrame
             statusBar.animator().frame = layout.statusFrame
             navigationSidebar.animator().frame = layout.navigationSidebarFrame
+            outlineFloatingButton.animator().frame = layout.outlineControlFrame
             readView?.animator().frame = layout.readFrame
             containerView.layoutSubtreeIfNeeded()
         }
@@ -544,8 +565,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         refreshViewModeButton()
     }
 
-    /// Stable controls beside the traffic lights toggle the primary repository
-    /// sidebar and outline, then expose the current window-pinning mode.
+    /// Stable window-level controls beside the traffic lights toggle repository
+    /// navigation and expose pinning. The document outline lives on the canvas.
     private func installSidebarControlsAccessory(in window: NSWindow) {
         func makeButton(action: Selector) -> NSButton {
             let button = NSButton()
@@ -563,20 +584,19 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             return button
         }
 
-        let outlineButton = makeButton(action: #selector(toggleOutlineSidebar(_:)))
         let navigationButton = makeButton(action: #selector(toggleNavigationSidebar(_:)))
         let pinningButton = makeButton(action: #selector(showWindowPinningMenu(_:)))
-        let controls = NSStackView(views: [navigationButton, outlineButton, pinningButton])
+        let controls = NSStackView(views: [navigationButton, pinningButton])
         controls.orientation = .horizontal
         controls.alignment = .centerY
-        controls.spacing = 4
+        controls.spacing = 6
         controls.translatesAutoresizingMaskIntoConstraints = false
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 96, height: 28))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 62, height: 30))
         container.addSubview(controls)
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: 96),
-            container.heightAnchor.constraint(equalToConstant: 28),
+            container.widthAnchor.constraint(equalToConstant: 62),
+            container.heightAnchor.constraint(equalToConstant: 30),
             controls.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             controls.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             controls.centerYAnchor.constraint(equalTo: container.centerYAnchor),
@@ -588,7 +608,6 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         accessory.view = container
         window.addTitlebarAccessoryViewController(accessory)
         sidebarControlsAccessory = accessory
-        outlineSidebarButton = outlineButton
         navigationSidebarButton = navigationButton
         windowPinningButton = pinningButton
         refreshSidebarControlAppearance()
@@ -617,7 +636,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             commandID: "view.toggleOutlineSidebar"
         )
         update(navigationSidebarButton, symbol: "sidebar.left", description: navigationDescription)
-        update(outlineSidebarButton, symbol: "list.bullet.indent", description: outlineDescription)
+        update(outlineFloatingButton, symbol: "list.bullet.indent", description: outlineDescription)
+        outlineFloatingButton?.isHidden = sidebarSessionState.isOutlineExpanded
     }
 
     private func refreshWindowPinningButtonAppearance() {
@@ -708,7 +728,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     }
 
     private func refreshSavePresentation() {
-        guard let window = windowControllers.first?.window else { return }
+        guard let window = presentationWindow else { return }
         window.subtitle = switch savePresentation {
         case .idle:
             ""
@@ -747,6 +767,15 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
     // MARK: - Window Level / Quick Capture
 
+    private var activeAllSpacesPinnedPanelController: AllSpacesPinnedPanelController? {
+        guard allSpacesPinnedPanelController?.isPresented == true else { return nil }
+        return allSpacesPinnedPanelController
+    }
+
+    private var presentationWindow: NSWindow? {
+        activeAllSpacesPinnedPanelController?.panel ?? windowControllers.first?.window
+    }
+
     var windowPinningMode: WindowPinningMode {
         (windowControllers.first?.window as? DocumentWindow)?.pinningMode ?? .none
     }
@@ -771,12 +800,263 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
     func setPinningMode(_ mode: WindowPinningMode) {
         guard let window = windowControllers.first?.window else { return }
-        let group = window.tabbedWindows ?? [window]
-        for case let documentWindow as DocumentWindow in group {
+        let groupedDocumentWindows = activeAllSpacesPinnedPanelController?.documentWindows
+            ?? documentWindows(including: window)
+        let selectedDocumentWindow = activeAllSpacesPinnedPanelController?.documentWindow
+            ?? window.tabGroup?.selectedWindow as? DocumentWindow
+            ?? groupedDocumentWindows.first(where: { $0.isKeyWindow })
+            ?? window as? DocumentWindow
+        let groupedDocuments = groupedDocumentWindows.compactMap { documentWindow -> Document? in
+            documentWindow.windowController?.document as? Document
+        }
+        if mode != .allSpaces {
+            for document in groupedDocuments {
+                document.dismissAllSpacesPinnedPanel(restoringDocumentWindow: false)
+            }
+        }
+        for documentWindow in groupedDocumentWindows {
             documentWindow.pinningMode = mode
         }
+        if mode == .allSpaces {
+            presentAllSpacesPinnedPanels(
+                for: groupedDocuments,
+                selectedDocumentWindow: selectedDocumentWindow
+            )
+        } else if let selectedDocumentWindow {
+            selectedDocumentWindow.makeKeyAndOrderFront(nil)
+        }
+        for document in groupedDocuments {
+            document.refreshWindowPinningButtonAppearance()
+            document.refreshPinnedWindowPresentation()
+        }
+    }
+
+    private func presentAllSpacesPinnedPanels(for documents: [Document],
+                                              selectedDocumentWindow: DocumentWindow?) {
+        let tabbingIdentifier = "floralmd.all-spaces.\(UUID().uuidString)"
+        let groupedDocumentWindows = documents.compactMap {
+            $0.windowControllers.first?.window as? DocumentWindow
+        }
+        for document in documents {
+            if let cachedController = document.allSpacesPinnedPanelController,
+               !cachedController.represents(documentWindows: groupedDocumentWindows) {
+                document.discardAllSpacesPinnedPanelCache()
+            }
+        }
+        for document in documents {
+            guard let documentWindow = document.windowControllers.first?.window as? DocumentWindow else {
+                continue
+            }
+            document.presentAllSpacesPinnedPanelIfNeeded(
+                from: documentWindow,
+                tabbingIdentifier: tabbingIdentifier,
+                activate: false
+            )
+        }
+
+        let controllers = documents.compactMap(\.allSpacesPinnedPanelController)
+        if let firstPanel = controllers.first?.panel {
+            for controller in controllers.dropFirst()
+            where controller.panel.tabGroup !== firstPanel.tabGroup {
+                firstPanel.addTabbedWindow(controller.panel, ordered: .above)
+            }
+        }
+        let selectedController = controllers.first {
+            $0.documentWindow === selectedDocumentWindow
+        } ?? controllers.first
+        selectedController?.activatePanel()
+    }
+
+    private func presentAllSpacesPinnedPanelIfNeeded(from window: NSWindow,
+                                                     tabbingIdentifier: String? = nil,
+                                                     activate: Bool = true) {
+        if let controller = allSpacesPinnedPanelController {
+            guard !controller.isPresented else { return }
+            controller.present(
+                in: self,
+                tabbingIdentifier: tabbingIdentifier
+                    ?? "floralmd.all-spaces.\(UUID().uuidString)",
+                activate: activate
+            )
+            return
+        }
+        guard let documentWindow = window as? DocumentWindow,
+              !documentWindow.styleMask.contains(.fullScreen),
+              let contentView = documentWindow.contentView,
+              let editor else {
+            Log.info(
+                "All-Spaces auxiliary panel deferred until the document exits full screen",
+                category: .app
+            )
+            return
+        }
+
+        let controller = AllSpacesPinnedPanelController(
+            documentWindow: documentWindow,
+            contentView: contentView,
+            editor: editor,
+            titlebarAccessories: [sidebarControlsAccessory].compactMap { $0 },
+            tabbingIdentifier: tabbingIdentifier
+                ?? "floralmd.all-spaces.\(UUID().uuidString)"
+        )
+        allSpacesPinnedPanelController = controller
+        controller.present(
+            in: self,
+            tabbingIdentifier: tabbingIdentifier
+                ?? "floralmd.all-spaces.\(UUID().uuidString)",
+            activate: activate
+        )
+    }
+
+    private func dismissAllSpacesPinnedPanel(restoringDocumentWindow: Bool) {
+        guard let controller = allSpacesPinnedPanelController else { return }
+        controller.dismiss(restoringDocumentWindow: restoringDocumentWindow)
+    }
+
+    private func discardAllSpacesPinnedPanelCache() {
+        guard let controller = allSpacesPinnedPanelController else { return }
+        if controller.isPresented {
+            controller.dismiss(restoringDocumentWindow: false)
+        }
+        controller.invalidateCache()
+        allSpacesPinnedPanelController = nil
+    }
+
+    /// Adds one document to the visible auxiliary tab group without exposing
+    /// the hidden ordinary hosts or rebuilding every existing panel.
+    func activateDocumentIncrementallyInAllSpaces(_ target: Document) -> Bool {
+        guard let sourceController = activeAllSpacesPinnedPanelController,
+              let sourceWindow = windowControllers.first?.window as? DocumentWindow,
+              let targetWindow = target.windowControllers.first?.window as? DocumentWindow else {
+            return false
+        }
+
+        if sourceController.documentWindows.contains(where: { $0 === targetWindow }),
+           let targetController = target.activeAllSpacesPinnedPanelController {
+            targetController.activatePanel()
+            return true
+        }
+
+        // A document already pinned in a different group must first restore
+        // its ordinary host so the original presentation state is captured.
+        if target.activeAllSpacesPinnedPanelController != nil {
+            target.prepareForNativeTabMutation()
+        }
+
+        let originalAlpha = targetWindow.alphaValue
+        let originalIgnoresMouseEvents = targetWindow.ignoresMouseEvents
+        targetWindow.alphaValue = 0
+        targetWindow.ignoresMouseEvents = true
+        let groupedWindows = targetWindow.tabGroup?.windows ?? targetWindow.tabbedWindows ?? []
+        if !groupedWindows.contains(sourceWindow) {
+            sourceWindow.addTabbedWindow(targetWindow, ordered: .above)
+        }
+        targetWindow.pinningMode = .allSpaces
+
+        let updatedDocumentWindows = documentWindows(including: sourceWindow)
+        if let cachedController = target.allSpacesPinnedPanelController,
+           !cachedController.represents(documentWindows: updatedDocumentWindows) {
+            target.discardAllSpacesPinnedPanelCache()
+        }
+        let tabbingIdentifier = sourceController.panel.tabbingIdentifier
+        target.presentAllSpacesPinnedPanelIfNeeded(
+            from: targetWindow,
+            tabbingIdentifier: tabbingIdentifier,
+            activate: false
+        )
+        guard let targetController = target.activeAllSpacesPinnedPanelController else {
+            targetWindow.alphaValue = originalAlpha
+            targetWindow.ignoresMouseEvents = originalIgnoresMouseEvents
+            return false
+        }
+        targetController.preserveDocumentWindowPresentationForDismissal(
+            alpha: originalAlpha,
+            ignoresMouseEvents: originalIgnoresMouseEvents
+        )
+
+        let groupedDocuments = updatedDocumentWindows.compactMap {
+            $0.windowController?.document as? Document
+        }
+        for document in groupedDocuments {
+            document.allSpacesPinnedPanelController?.updateDocumentWindows(updatedDocumentWindows)
+            document.refreshWindowPinningButtonAppearance()
+            document.refreshPinnedWindowPresentation()
+        }
+        DispatchQueue.main.async { [weak self, weak target,
+                                    weak sourceController, weak targetController] in
+            guard let self, let target, let sourceController, let targetController,
+                  self.activeAllSpacesPinnedPanelController === sourceController,
+                  target.activeAllSpacesPinnedPanelController === targetController else {
+                return
+            }
+            if targetController.panel.tabGroup !== sourceController.panel.tabGroup {
+                sourceController.panel.addTabbedWindow(targetController.panel, ordered: .above)
+            }
+            targetController.activatePanel()
+            target.finishHiddenWindowPresentationSetup()
+        }
+        return true
+    }
+
+    func activateAllSpacesPinnedPanelIfPresented() -> Bool {
+        guard let controller = activeAllSpacesPinnedPanelController else { return false }
+        controller.activatePanel()
+        return true
+    }
+
+    /// Native tab mutation requires the ordinary document windows to be back
+    /// in their AppKit tab group before a different document becomes active.
+    func prepareForNativeTabMutation() {
+        guard let controller = activeAllSpacesPinnedPanelController else { return }
+        let groupedDocuments = controller.documentWindows
+            .compactMap { $0.windowController?.document as? Document }
+        for document in groupedDocuments {
+            document.dismissAllSpacesPinnedPanel(restoringDocumentWindow: false)
+            document.discardAllSpacesPinnedPanelCache()
+        }
+    }
+
+    /// A newly opened ordinary tab inherits only its own inexpensive window
+    /// presentation. Calling `setPinningMode` after tabbing would refresh every
+    /// document in the group even when the inherited mode is `.none`.
+    func applyInheritedOrdinaryPinningMode(_ mode: WindowPinningMode) {
+        guard mode != .allSpaces,
+              let window = windowControllers.first?.window as? DocumentWindow else { return }
+        window.pinningMode = mode
         refreshWindowPinningButtonAppearance()
         refreshPinnedWindowPresentation()
+    }
+
+    /// Builds and loads a document without ordering its ordinary host window.
+    /// `NSDocumentController(display: false)` leaves `pendingContent` untouched
+    /// because `showWindows()` is not called; moving that empty view into an
+    /// auxiliary panel would expose a blank first frame.
+    func prepareForHiddenWindowPresentation() {
+        if windowControllers.isEmpty {
+            makeWindowControllers()
+        }
+        loadPendingWindowContent()
+        updateStatusBar()
+        updateOutline()
+    }
+
+    func finishHiddenWindowPresentationSetup() {
+        refreshGitChangeMarkers()
+        refreshNavigationSidebar()
+        restartExternalFileMonitor()
+    }
+
+    func requestOwnFullScreen(_ sender: Any?) {
+        guard let window = windowControllers.first?.window as? DocumentWindow else { return }
+        let groupedDocuments = (activeAllSpacesPinnedPanelController?.documentWindows
+            ?? documentWindows(including: window)).compactMap {
+                $0.windowController?.document as? Document
+            }
+        for document in groupedDocuments {
+            document.dismissAllSpacesPinnedPanel(restoringDocumentWindow: false)
+        }
+        window.makeKeyAndOrderFront(nil)
+        window.toggleFullScreen(sender)
     }
 
     func activateAsQuickCapture() {
@@ -813,10 +1093,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     /// normal and floating levels.
     @objc private func windowDidBecomeKey(_ notification: Notification) {
         guard let window = notification.object as? DocumentWindow else { return }
-        if let tabbedWindows = window.tabbedWindows {
-            for case let tab as DocumentWindow in tabbedWindows {
-                tab.pinningMode = window.pinningMode
-            }
+        for tab in documentWindows(including: window) {
+            tab.pinningMode = window.pinningMode
         }
         refreshWindowPinningButtonAppearance()
         refreshPinnedWindowPresentation()
@@ -832,25 +1110,48 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
     @objc private func windowDidExitFullScreen(_ notification: Notification) {
         setPinningSuspendedForFullScreen(false, window: notification.object as? DocumentWindow)
+        if windowPinningMode == .allSpaces,
+           let window = windowControllers.first?.window {
+            let groupedDocuments = documentWindows(including: window).compactMap {
+                $0.windowController?.document as? Document
+            }
+            presentAllSpacesPinnedPanels(
+                for: groupedDocuments,
+                selectedDocumentWindow: window as? DocumentWindow
+            )
+        }
         refreshPinnedWindowPresentation()
     }
 
     fileprivate func windowDidFailToEnterFullScreen(_ window: DocumentWindow) {
         setPinningSuspendedForFullScreen(false, window: window)
+        if windowPinningMode == .allSpaces {
+            let groupedDocuments = documentWindows(including: window).compactMap {
+                $0.windowController?.document as? Document
+            }
+            presentAllSpacesPinnedPanels(
+                for: groupedDocuments,
+                selectedDocumentWindow: window
+            )
+        }
         refreshPinnedWindowPresentation()
     }
 
     private func setPinningSuspendedForFullScreen(_ suspended: Bool,
                                                   window: DocumentWindow?) {
         guard let window else { return }
-        let group = window.tabbedWindows ?? [window]
-        for case let tab as DocumentWindow in group {
+        for tab in documentWindows(including: window) {
             if suspended {
                 tab.suspendPinningForOwnFullScreen()
             } else {
                 tab.resumePinningAfterOwnFullScreen()
             }
         }
+    }
+
+    private func documentWindows(including window: NSWindow) -> [DocumentWindow] {
+        let windows = window.tabGroup?.windows ?? window.tabbedWindows ?? [window]
+        return windows.compactMap { $0 as? DocumentWindow }
     }
 
     @objc private func accessibilityDisplayOptionsDidChange(_ notification: Notification) {
@@ -862,10 +1163,11 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     /// deliberately avoids `NSWindow.alphaValue`, which
     /// would also fade text, the caret, controls, images, and fragment overlays.
     private func refreshPinnedWindowPresentation() {
-        guard let window = windowControllers.first?.window as? DocumentWindow else { return }
+        guard let documentWindow = windowControllers.first?.window as? DocumentWindow,
+              let window = presentationWindow else { return }
         let workspace = NSWorkspace.shared
         let opacity = PinnedWindowPresentationPolicy.backgroundOpacity(
-            mode: window.pinningMode,
+            mode: documentWindow.pinningMode,
             isFullScreen: window.styleMask.contains(.fullScreen),
             reduceTransparency: workspace.accessibilityDisplayShouldReduceTransparency,
             increaseContrast: workspace.accessibilityDisplayShouldIncreaseContrast
@@ -1137,16 +1439,23 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     /// Called after makeWindowControllers when opening an existing file.
     override func showWindows() {
         super.showWindows()
+        loadPendingWindowContent()
+        finishHiddenWindowPresentationSetup()
+        updateStatusBar()
+        updateOutline()
+    }
+
+    private func loadPendingWindowContent() {
         if let content = pendingContent {
             editor?.loadContent(content)
             pendingContent = nil
             warnIfInconsistentLineEndings(in: content)
         }
-        refreshGitChangeMarkers()
-        updateStatusBar()
-        updateOutline()
-        refreshNavigationSidebar()
-        restartExternalFileMonitor()
+    }
+
+    override func close() {
+        discardAllSpacesPinnedPanelCache()
+        super.close()
     }
 
     @objc private func refreshGitChangeMarkers() {
@@ -1775,6 +2084,7 @@ extension Document: NSToolbarDelegate {
 /// appearance changes; pinned translucency disables the fill alongside the
 /// editor instead of stacking another translucent layer over the window.
 private final class DocumentContainerView: NSView {
+    var onAppearanceChange: (() -> Void)?
     var drawsBackground = true {
         didSet {
             guard oldValue != drawsBackground else { return }
@@ -1795,6 +2105,30 @@ private final class DocumentContainerView: NSView {
         layer?.backgroundColor = drawsBackground
             ? NSColor.textBackgroundColor.cgColor
             : NSColor.clear.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+        onAppearanceChange?()
+    }
+}
+
+/// A controlled boundary between the unified titlebar and document surface.
+/// AppKit's native titlebar separator is too faint on near-white backgrounds,
+/// so this hairline keeps the same hierarchy in both appearances.
+private final class DocumentSurfaceSeparatorView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.20).cgColor
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -1843,6 +2177,7 @@ private final class DocumentWindowController: NSWindowController {
 final class DocumentWindow: NSWindow {
     weak var viewModeButton: NSView?
     var makeViewModeMenu: (() -> NSMenu)?
+    var prepareForOwnFullScreen: (() -> Void)?
     var pinningMode: WindowPinningMode = .none {
         didSet { applyPinningPresentation() }
     }
@@ -1858,12 +2193,9 @@ final class DocumentWindow: NSWindow {
         applyPinningPresentation()
     }
 
-    /// `.canJoinAllSpaces` covers ordinary desktop Spaces.
-    /// `.fullScreenAuxiliary` makes the window eligible to accompany another
-    /// primary full-screen window, while `.canJoinAllApplications` extends that
-    /// eligibility to other apps and Stage Manager sets. Those roles cannot be
-    /// combined with `.fullScreenPrimary`, so FloralMD's own full-screen request
-    /// temporarily suspends pinning before making this the primary window.
+    /// The ordinary document host always retains its primary-window role. In
+    /// All-Spaces mode its content is temporarily owned by a dedicated
+    /// nonactivating panel that carries the auxiliary collection behavior.
     func applyPinningPresentation() {
         let presentation = PinnedWindowPresentationPolicy.windowPresentation(
             mode: pinningMode,
@@ -1890,6 +2222,7 @@ final class DocumentWindow: NSWindow {
 
     override func toggleFullScreen(_ sender: Any?) {
         if !styleMask.contains(.fullScreen) {
+            prepareForOwnFullScreen?()
             suspendPinningForOwnFullScreen()
         }
         super.toggleFullScreen(sender)

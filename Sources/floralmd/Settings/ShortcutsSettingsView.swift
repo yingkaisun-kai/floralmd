@@ -41,34 +41,41 @@ struct ShortcutsSettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(tr(
-                "FloralMD commands can be changed or cleared. Fixed macOS standard shortcuts can be shown for reference.",
-                "FloralMD 命令可以修改或清除；固定的 macOS 标准快捷键可按需显示以供参考。"
-            ))
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        SettingsPage(
+            title: tr("Shortcuts", "快捷键"),
+            subtitle: tr(
+                "Record, clear, or restore FloralMD shortcuts while keeping macOS standards visible for reference.",
+                "录制、清除或恢复 FloralMD 快捷键，并可显示 macOS 标准快捷键供参考。"
+            )
+        ) {
+            SettingsCard(tr("Find Commands", "查找命令"), symbol: "magnifyingglass") {
+                Text(tr(
+                    "FloralMD commands can be changed or cleared. Fixed macOS standard shortcuts can be shown for reference.",
+                    "FloralMD 命令可以修改或清除；固定的 macOS 标准快捷键可按需显示以供参考。"
+                ))
+                .settingsSupportingText()
 
-            HStack(spacing: 12) {
-                TextField(tr("Search shortcuts", "搜索快捷键"), text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel(tr("Search shortcuts", "搜索快捷键"))
-                Toggle(
-                    tr("Show macOS standard shortcuts", "显示 macOS 标准快捷键"),
-                    isOn: $showFixedShortcuts
-                )
-                .toggleStyle(.checkbox)
-                .fixedSize()
+                HStack(spacing: 12) {
+                    TextField(tr("Search shortcuts", "搜索快捷键"), text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel(tr("Search shortcuts", "搜索快捷键"))
+                    Toggle(
+                        tr("Show macOS standard shortcuts", "显示 macOS 标准快捷键"),
+                        isOn: $showFixedShortcuts
+                    )
+                    .toggleStyle(.checkbox)
+                    .fixedSize()
+                }
+
+                if let conflictMessage {
+                    Label(conflictMessage, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .accessibilityLabel(conflictMessage)
+                }
             }
 
-            if let conflictMessage {
-                Label(conflictMessage, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
-                    .accessibilityLabel(conflictMessage)
-            }
-
-            ScrollView {
-                if visibleDefinitions.isEmpty {
+            if visibleDefinitions.isEmpty {
+                SettingsCard(tr("No Shortcuts Found", "未找到快捷键"), symbol: "keyboard") {
                     ContentUnavailableView(
                         tr("No Shortcuts Found", "未找到快捷键"),
                         systemImage: "keyboard",
@@ -77,17 +84,16 @@ struct ShortcutsSettingsView: View {
                             "请尝试其他搜索词，或显示 macOS 标准快捷键。"
                         ))
                     )
-                    .frame(maxWidth: .infinity, minHeight: 300)
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        ForEach(ShortcutCommandDefinition.Category.allCases, id: \.self) { category in
-                            let definitions = visibleDefinitions.filter { $0.category == category }
-                            if !definitions.isEmpty {
-                                shortcutSection(category, definitions: definitions)
-                            }
+                    .frame(maxWidth: .infinity, minHeight: 220)
+                }
+            } else {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    ForEach(ShortcutCommandDefinition.Category.allCases, id: \.self) { category in
+                        let definitions = visibleDefinitions.filter { $0.category == category }
+                        if !definitions.isEmpty {
+                            shortcutSection(category, definitions: definitions)
                         }
                     }
-                    .padding(.vertical, 4)
                 }
             }
 
@@ -100,8 +106,6 @@ struct ShortcutsSettingsView: View {
                 }
             }
         }
-        .padding(24)
-        .frame(width: 720, height: 580, alignment: .topLeading)
         .id(refreshToken)
         .onReceive(NotificationCenter.default.publisher(for: .shortcutSettingsDidChange)) { _ in
             refreshToken = UUID()
@@ -114,12 +118,14 @@ struct ShortcutsSettingsView: View {
     @ViewBuilder
     private func shortcutSection(_ category: ShortcutCommandDefinition.Category,
                                  definitions: [ShortcutCommandDefinition]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(categoryTitle(category))
-                .font(.headline)
-            ForEach(definitions, id: \.id) { definition in
-                shortcutRow(definition)
-                Divider()
+        SettingsCard(categoryTitle(category), symbol: categorySymbol(category)) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(definitions, id: \.id) { definition in
+                    shortcutRow(definition)
+                    if definition.id != definitions.last?.id {
+                        Divider()
+                    }
+                }
             }
         }
     }
@@ -130,13 +136,9 @@ struct ShortcutsSettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(commandTitle(definition))
                 if definition.productionOnly {
-                    Text(tr("Production only", "仅正式版"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    SettingsStatusBadge(text: tr("Production only", "仅正式版"))
                 } else if definition.defaultShortcut?.scope == .global {
-                    Text(tr("System-wide", "系统级全局"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    SettingsStatusBadge(text: tr("System-wide", "系统级全局"), tone: .positive)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -225,6 +227,18 @@ struct ShortcutsSettingsView: View {
         case .format: return tr("Format", "格式")
         case .window: return tr("Window", "窗口")
         case .global: return tr("Global", "全局")
+        }
+    }
+
+    private func categorySymbol(_ category: ShortcutCommandDefinition.Category) -> String {
+        switch category {
+        case .application: "app"
+        case .file: "doc"
+        case .edit: "pencil"
+        case .view: "eye"
+        case .format: "textformat"
+        case .window: "macwindow"
+        case .global: "globe"
         }
     }
 

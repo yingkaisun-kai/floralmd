@@ -37,6 +37,10 @@ Production 与专项 Debug 扩展都在自己的 `Info.plist` 中以 `CFBundleIc
 声明 `AppIcon`，并在 `Contents/Resources` 内携带与宿主逐字节相同的
 `AppIcon.icns`；构建时还会把扩展的营销版本与构建号同步到宿主，确保系统能识别
 新的扩展资源。`scripts/build-app.sh` 会在签名后的 bundle 验证这些条件。
+`AppIcon.icns` 还必须保留 alpha 通道：若圆角图标以不透明 RGB 画布封装，Finder
+和 DMG 会把圆角外的画布显示成白色方块。构建脚本会在复制资源前用 `sips` 拒绝
+这种产物，`Resources/AppIcon.png` 与 `docs/assets/AppIcon/` 中的派生 PNG 也统一
+保留透明角。
 
 Swift Package 包含三个主要 Target：
 
@@ -128,8 +132,8 @@ Markdown 源码
 
 ## 8. 应用界面结构
 
-- 左侧大纲读取当前文档标题结构；
-- 右侧文件树从当前文件向上寻找最近的 Git 仓库，否则回退到当前目录；
+- 文档大纲读取当前文档标题结构；
+- 文件侧栏从当前文件向上寻找最近的 Git 仓库，否则回退到当前目录；
 - 文件树单击文件行仍负责打开文档；仅双击文件名文本进入原位重命名，编辑的
   是主文件名并保留原扩展名。Return 提交，Escape 或失焦取消。文件夹不进入
   此流程。标题栏与侧栏共用 `DocumentFileRenameRequest` 的验证规则：不允许空名、
@@ -157,11 +161,16 @@ Markdown 源码
 - 每个新建、重新打开或由系统恢复创建的文档窗口，其窗口会话初始都收起左右
   侧栏；这不是 `UserDefaults` 设置，也不在后续刷新中重复应用，用户展开后会在
   该窗口会话内保持展开。快速记录继续复用同一初始状态并保留其紧凑窗口策略。
-- 文件侧栏是窗口最左侧的主栏，大纲是紧邻正文的次级面板；文件侧栏展开时，大纲
-  与编辑区域整体右移，文件侧栏收起后两者回到窗口左缘。两个开关固定并排放在红
-  绿灯右侧的 leading `NSTitlebarAccessoryViewController` 中，同一按钮负责展开和
-  收起。两栏收起时都在内容布局中占用 `0` 宽度，不会留下全高 rail，也不会覆盖
-  正文、滚动条或 minimap。
+- 文件侧栏是窗口最左侧的窗口级主栏，其开关与置顶开关固定放在红绿灯右侧的
+  leading `NSTitlebarAccessoryViewController` 中。大纲是紧邻正文的文档级次级
+  面板：收起时入口固定悬浮在编辑表面左上角的空白边距中，不随正文滚动；展开时
+  面板推动编辑区域并在自身标题区提供收起按钮，不覆盖正文。文件侧栏展开时，大纲
+  与编辑区域整体右移，文件侧栏收起后两者回到窗口左缘。两栏收起时都在内容布局中
+  占用 `0` 宽度，不会留下全高 rail，也不会覆盖正文、滚动条或 minimap。
+- 文档窗口使用透明 unified 标题栏，并在内容表面顶端绘制一条可控的细分隔线，让
+  标题栏与编辑表面保持连续但仍可辨认；窗口底色必须随有效外观变化重新解析，否则
+  启动阶段先创建的窗口会在深色模式下保留浅色标题栏。两侧栏使用稳定的冷中性
+  实色层级，避免展开动画逐帧重算全高毛玻璃；置顶半透明仍由下述统一背景策略控制。
 - 编辑模式、源码模式与阅读模式共享同一份文档状态。
 
 ## 9. 设置与本地数据
@@ -169,6 +178,11 @@ Markdown 源码
 所有置顶窗口使用固定 88% 不透明度的背景。编辑器、阅读模式和侧栏只停止绘制各自的不透明底色，窗口本身不降低 `alphaValue`，因此文字、光标、控件、图片、数学公式和 TextKit 2 overlay 保持完全不透明。取消置顶或进入全屏会恢复不透明背景；系统启用“减少透明度”或“增强对比度”时也强制使用不透明背景，并监听辅助显示选项变化即时更新。
 
 用户设置保存在 `UserDefaults`。设置窗口按通用、编辑器、快捷键、外观和高级分类；其中打字机滚动、源码显示和缩略图由 `AppSettings` 持久化，并通过 `EditorPreferenceCoordinator` 在设置、视图菜单、快捷键和所有已打开文档之间同步。
+
+设置窗口使用 AppKit `NSSplitViewController` 保持固定左侧分类导航，右侧为缓存的
+`NSHostingController`；五个 SwiftUI pane 继续拥有各自的 `@AppStorage`、sheet、
+字体面板和即时副作用，只把内容组织为可滚动的卡片分组。切换分类不会重建 pane，
+窗口缩放也不再由各 pane 的固有高度驱动。
 
 快捷键由 `ShortcutCatalog` 以稳定命令 ID 统一登记默认值、作用域和是否允许
 自定义。`ShortcutManager` 从 `settings.shortcuts.overrides` 解析覆盖并实时重建
@@ -187,7 +201,7 @@ key code；输入源变化时会重新计算后者的显示字符和应用内冲
 
 快速记录是现有未命名文档流程的全局入口，而不是第二套便签存储：用户录制一个全局快捷键后，`GlobalHotKeyController` 通过系统离散热键 API 唤起 FloralMD，不需要监听全部键盘事件或申请辅助功能权限。热键使用独占注册做系统冲突的尽力检测，候选值先注册成功才替换旧值，因此冲突不会让已有快捷键失效；macOS 没有公开 API 枚举全部系统和其他应用快捷键，检测不能视为完备。每次触发会复用仍为空白的快速记录窗口，否则创建新的 `NSDocument`；快捷窗口在显示前即采用与普通文档硬下限一致的 550×400 窗口尺寸、禁止自动并入普通文档标签组并收起左右侧栏，不读取或覆盖普通文档的窗口尺寸偏好。普通文档也可执行“缩至最小窗口”，但该一次性动作不会覆盖下次新建普通窗口所用的已保存尺寸。快速记录默认使用“仅当前 Space”置顶；若用户已将可复用窗口切为“所有 Space”，再次唤起时保留该模式，而已取消置顶的窗口会恢复为“仅当前 Space”。窗口继续使用下述未命名首次落盘流程。启用快速记录会同时启用未命名自动落盘，关闭后者也会关闭快速记录。快速记录启用期间，关闭最后一个窗口只让应用保持待命，`⌘Q` 才退出。
 
-置顶是窗口会话状态，不写入 Markdown、`UserDefaults` 或窗口恢复数据。每个原生标签组共享“不置顶”“仅当前 Space”“所有 Space”三态，标题栏左侧用 `pin.slash`、`pin.fill`、`globe` 常驻显示当前模式并提供三态菜单。前两态保留普通文档窗口的 `.primary + .fullScreenPrimary` 角色，仅通过 `.floating` 区分是否压过同一 Space 内的普通窗口；“所有 Space”改用 `.canJoinAllSpaces + .fullScreenAuxiliary + .canJoinAllApplications`：普通桌面 Space 由第一项覆盖，后两项让窗口有资格加入其他 App 的原生全屏 Space 与 Stage Manager 集合。AppKit 对普通文档窗口进入其他 App 全屏 Space 只提供资格而非绝对覆盖保证；不能同时保留 `.fullScreenPrimary`，因为该标记会让窗口退出其他 App 的全屏 Space。FloralMD 自身请求全屏时，`DocumentWindow.toggleFullScreen` 会先暂时去掉跨 App/Space 资格并恢复 `.primary + .fullScreenPrimary` 与普通层级；进入失败或正常退出后均按会话状态恢复。全屏命令显式接入菜单和固定的 macOS 标准快捷键 `⌃⌘F`，不依赖 AppKit 自动插入菜单项。
+置顶是窗口会话状态，不写入 Markdown、`UserDefaults` 或窗口恢复数据。每个原生标签组共享“不置顶”“仅当前 Space”“所有 Space”三态，标题栏左侧用 `pin.slash`、`pin.fill`、`globe` 常驻显示当前模式并提供三态菜单。前两态保留普通文档窗口的 `.primary + .fullScreenPrimary` 角色，仅通过 `.floating` 区分是否压过同一 Space 内的普通窗口。普通 titled `NSDocument` 窗口即使设置 `.canJoinAllSpaces + .fullScreenAuxiliary + .canJoinAllApplications`，也不能稳定进入另一个 App 的原生全屏 Space；“所有 Space”因此由 `AllSpacesPinnedPanelController` 把每个标签文档已有的编辑器内容视图、工具栏和 FloralMD 自建的标题栏 accessory 临时移入对应的 titled `.nonactivatingPanel`，这些面板按原顺序组成辅助标签组，只使用 `.canJoinAllSpaces + .fullScreenAuxiliary` 与 `.floating`。存储、撤销、选区和 IME 状态没有副本，退出该模式后原样移回普通文档窗口。面板登记为对应 `NSDocument` 的 window controller；每个原 `DocumentWindow` 只保留空占位视图，并临时设为 `alphaValue=0`、忽略鼠标，但不 `orderOut`。这个透明度只作用于没有正文的宿主，不会淡化文字或 overlay；保留宿主是必要的，因为 `orderOut` 最后一个文档窗口会触发应用退出，也会让 AppKit 在过渡期拆散原生 tab group。切回普通模式后，控制器保留未登记到 `NSDocument`、没有正文和工具栏的隐藏 Panel 外壳，后续切换直接复用以避开窗口分配；普通标签操作不在交互关键路径销毁这些休眠外壳，文档关闭或下次进入所有 Space 时才丢弃与当前标签成员不匹配的缓存。从文件侧栏打开新文档始终使用 `display: false`，完整消费 `pendingContent` 并加入目标标签组后才显示；“不置顶”和“仅当前 Space”只把模式应用到新窗口自身，不运行组级刷新。所有 Space 模式只为新文档增量创建或复用一个辅助 Panel，普通宿主从入组到 Panel 接管始终保持透明；已有 Panel 和正文视图不会拆卸，辅助标签的接入和激活推迟到下一轮主线程，但不强制同步绘制。模式切换和其余原生标签增删前使用面板创建时冻结的组成员统一恢复普通宿主，不能在 AppKit 过渡期重新查询组；辅助标签组内的标签切换则直接切换各文档自己的面板，模式图标和正文同步更新。FloralMD 自身请求全屏时会先恢复整个普通 `DocumentWindow` 标签组及其 `.primary + .fullScreenPrimary` 角色；退出或进入失败后若模式仍为“所有 Space”，再重建辅助标签组。全屏命令显式接入菜单和固定的 macOS 标准快捷键 `⌃⌘F`，不依赖 AppKit 自动插入菜单项。
 
 设置页中依赖目录授权的开关不能在 `@AppStorage.onChange` 内同步调用
 `NSOpenPanel.runModal()`：这会在 SwiftUI 控件事务尚未完成时进入新的模态循环，

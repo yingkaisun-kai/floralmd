@@ -25,56 +25,46 @@ struct GeneralSettingsView: View {
     private func tr(_ en: String, _ zh: String) -> String { AppCopy.text(en, zh, language: language) }
 
     var body: some View {
-        Grid(alignment: .leadingFirstTextBaseline, verticalSpacing: 18) {
-            GridRow {
-                Text(tr("Language:", "语言："))
-                    .gridColumnAlignment(.trailing)
-                Picker("", selection: $language) {
-                    ForEach(AppLanguage.allCases) { option in
-                        Text(option.displayName(in: language)).tag(option)
+        SettingsPage(
+            title: tr("General", "通用"),
+            subtitle: tr(
+                "Choose how FloralMD starts, saves documents, and handles files.",
+                "选择 FloralMD 的启动、文档保存与文件处理方式。"
+            )
+        ) {
+            SettingsCard(tr("Language & Updates", "语言与更新"), symbol: "globe") {
+                LabeledContent(tr("Language", "语言")) {
+                    Picker("", selection: $language) {
+                        ForEach(AppLanguage.allCases) { option in
+                            Text(option.displayName(in: language)).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    .onChange(of: language) {
+                        NotificationCenter.default.post(name: .appLanguageDidChange, object: nil)
                     }
                 }
-                .labelsHidden()
-                .fixedSize()
-                .onChange(of: language) {
-                    NotificationCenter.default.post(name: .appLanguageDidChange, object: nil)
-                }
+
+                #if FLORALMD_PRODUCTION
+                Divider()
+                Toggle(tr("Automatically check for updates", "自动检查更新"), isOn: $autoCheckUpdates)
+                #endif
             }
 
-            #if FLORALMD_PRODUCTION
-            GridRow { Divider().gridCellColumns(2) }
-            GridRow {
-                Text(tr("Software updates:", "软件更新："))
-                    .gridColumnAlignment(.trailing)
-                VStack(alignment: .leading, spacing: 6) {
-                    Toggle(tr("Automatically check for updates", "自动检查更新"), isOn: $autoCheckUpdates)
-                }
-            }
-            
-            GridRow {
-                Divider().gridCellColumns(2)
-            }
-            #endif
-            
-            GridRow {
-                Text(tr("On startup:", "启动时："))
-                    .gridColumnAlignment(.trailing)
-                VStack(alignment: .leading, spacing: 6) {
-                    Toggle(tr("Reopen windows from last session", "重新打开上次会话的窗口"), isOn: $reopenWindows)
-                    Text(tr("When nothing else is open:", "没有其他窗口时："))
+            SettingsCard(tr("Startup", "启动"), symbol: "power") {
+                Toggle(tr("Reopen windows from last session", "重新打开上次会话的窗口"), isOn: $reopenWindows)
+                LabeledContent(tr("When nothing else is open", "没有其他窗口时")) {
                     Picker("", selection: $startupAction) {
                         ForEach(AppSettings.StartupAction.allCases) { Text($0.label).tag($0) }
                     }
                     .labelsHidden()
                     .fixedSize()
-                    .padding(.leading, 20)
                 }
             }
 
-            GridRow {
-                Text(tr("Document save:", "文档保存："))
-                    .gridColumnAlignment(.trailing)
-                VStack(alignment: .leading, spacing: 6) {
+            SettingsCard(tr("Document Saving", "文档保存"), symbol: "document.badge.clock") {
+                VStack(alignment: .leading, spacing: 14) {
                     Picker("", selection: $autoSave) {
                         Text(tr("Automatically save changes (recommended)", "自动保存修改（推荐）"))
                             .tag(true)
@@ -87,8 +77,7 @@ struct GeneralSettingsView: View {
                         AppSettings.applyDocumentSaving()
                     }
 
-                    HStack(spacing: 8) {
-                        Text(tr("Auto-save interval:", "自动保存间隔："))
+                    LabeledContent(tr("Auto-save interval", "自动保存间隔")) {
                         Picker("", selection: $autoSaveInterval) {
                             ForEach(DocumentAutoSaveInterval.allCases) { interval in
                                 Text(intervalLabel(interval)).tag(interval.rawValue)
@@ -103,20 +92,17 @@ struct GeneralSettingsView: View {
                         AppSettings.applyDocumentSaving()
                     }
 
-                    Text(tr("Automatic saving uses macOS Versions so earlier revisions remain recoverable. Manual mode asks before closing a changed document.",
-                            "自动保存会使用 macOS 版本记录，仍可恢复较早版本；手动模式会在关闭已修改文档前询问。"))
-                        .foregroundStyle(.secondary)
-                        .controlSize(.small)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(width: 380, alignment: .leading)
-                        .padding(.leading, 20)
+                    Text(tr(
+                        "Automatic saving uses macOS Versions so earlier revisions remain recoverable. Manual mode asks before closing a changed document.",
+                        "自动保存会使用 macOS 版本记录，仍可恢复较早版本；手动模式会在关闭已修改文档前询问。"
+                    ))
+                    .settingsSupportingText()
+                    .padding(.leading, 20)
 
                     Divider()
-                        .padding(.vertical, 2)
 
                     Toggle(
-                        tr("Automatically create a file for new drafts",
-                           "自动为新草稿创建文件"),
+                        tr("Automatically create a file for new drafts", "自动为新草稿创建文件"),
                         isOn: Binding(
                             get: { autoSaveUntitled },
                             set: { requestToggleChange(.setAutoSaveUntitledDocuments($0)) }
@@ -127,9 +113,10 @@ struct GeneralSettingsView: View {
                     HStack(spacing: 8) {
                         Text(untitledDirectory?.path(percentEncoded: false)
                              ?? tr("No folder selected", "尚未选择文件夹"))
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .frame(width: 285, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         Button(tr("Choose…", "选择…")) {
                             chooseUntitledDirectory(committing: nil)
                         }
@@ -141,14 +128,10 @@ struct GeneralSettingsView: View {
                         "After you stop typing, a nonblank Untitled document is saved here once. Later changes follow the save mode above.",
                         "停止输入后，非空白的未命名文档会在此首次落盘；后续修改遵循上方的保存模式。"
                     ))
-                    .foregroundStyle(.secondary)
-                    .controlSize(.small)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: 380, alignment: .leading)
+                    .settingsSupportingText()
                     .padding(.leading, 20)
 
                     Divider()
-                        .padding(.vertical, 2)
 
                     Toggle(
                         tr("Enable Quick Capture", "启用快速记录"),
@@ -163,31 +146,24 @@ struct GeneralSettingsView: View {
                         "Creates a new always-on-top draft from any app. Configure its global shortcut in Shortcuts settings.",
                         "可从任何应用新建置顶草稿；全局快捷键请在“快捷键”设置中配置。"
                     ))
-                    .foregroundStyle(.secondary)
-                    .controlSize(.small)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: 380, alignment: .leading)
+                    .settingsSupportingText()
                     .padding(.leading, 20)
+
+                    Divider()
+
+                    Text(tr(
+                        "When a document is changed by another application",
+                        "文档被其他应用修改时"
+                    ))
+                    .font(.subheadline.weight(.medium))
+                    Picker("", selection: $conflict) {
+                        ForEach(AppSettings.ConflictResolution.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.radioGroup)
+                    .labelsHidden()
                 }
             }
-
-            GridRow {
-                Text(tr("When document is changed by another application:", "文档被其他应用修改时："))
-                    .gridCellColumns(2)
-            }
-            .padding(.bottom, -8)
-
-            GridRow {
-                Color.clear.frame(width: 1, height: 1)
-                Picker("", selection: $conflict) {
-                    ForEach(AppSettings.ConflictResolution.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-            }
-
         }
-        .settingsPanePadding()
         .onAppear {
             untitledDirectory = AppSettings.untitledDocumentDirectoryURL()
             applyToggleState(GeneralSettingsTogglePolicy.normalized(
@@ -196,6 +172,12 @@ struct GeneralSettingsView: View {
             ))
         }
     }
+
+    /*
+     The toggle policy and directory sheet below deliberately remain separate
+     from the visual card layout. They are the behavior boundary for Quick
+     Capture and first-save authorization.
+     */
 
     private func intervalLabel(_ interval: DocumentAutoSaveInterval) -> String {
         let seconds = Int(interval.rawValue)

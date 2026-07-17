@@ -140,6 +140,11 @@ if [ "$VARIANT" = "debug" ]; then
         "${BUNDLE}/Contents/Info.plist"
 fi
 
+if ! sips -g hasAlpha Resources/AppIcon.icns 2>/dev/null | grep -q "hasAlpha: yes"; then
+    echo "Error: AppIcon.icns has no alpha channel; rounded icon corners would render as an opaque square." >&2
+    exit 1
+fi
+
 cp Resources/AppIcon.icns "${BUNDLE}/Contents/Resources/AppIcon.icns"
 cp LICENSE NOTICE "${BUNDLE}/Contents/Resources/"
 for localization in Resources/*.lproj; do
