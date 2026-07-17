@@ -6,6 +6,41 @@
         <description>FloralMD release feed</description>
         <language>en</language>
         <item>
+            <title>FloralMD 2026.7.4</title>
+            <pubDate>Fri, 17 Jul 2026 11:32:29 +0000</pubDate>
+            <description><![CDATA[
+<style>body{font:13px -apple-system,system-ui;color:#111;margin:8px}h3{font-size:15px;margin:14px 0 6px}h4{font-size:13px;margin:12px 0 4px}ul{margin:0 0 8px;padding-left:20px}li{margin:2px 0}code{font-family:ui-monospace,monospace;background:rgba(127,127,127,.15);padding:1px 4px;border-radius:3px}@media(prefers-color-scheme:dark){body{color:#eee}}</style>
+<h3>中文</h3>
+<h4>变更</h4>
+<ul>
+<li>重新整理窗口、标题栏、文件侧边栏与大纲的视觉层级，使用更明亮、稳定的冷中性色表面和更清晰的分隔线；设置窗口现在采用固定分类侧栏与可滚动卡片布局，切换分类和调整窗口大小更加稳定。</li>
+</ul>
+<h4>修复</h4>
+<ul>
+<li>修复“所有 Space”模式无法可靠进入其他 App 原生全屏 Space 的问题；置顶文档现在使用可复用的辅助面板承载原有编辑内容，并保持窗口位置、标签页、选区、撤销和输入法状态。</li>
+<li>修复在“所有 Space”模式下从文件侧边栏连续打开多个标签页时可能出现的停顿和空白过渡；新标签页现在会增量接入并提前准备，已有标签页不会重复重建。</li>
+<li>修复应用图标圆角外区域在 Finder、Quick Look 和 DMG 中显示为不透明方块的问题，并在构建时校验透明通道。</li>
+</ul>
+<h3>English</h3>
+<h4>Changed</h4>
+<ul>
+<li>Refined the visual hierarchy across the window, titlebar, file sidebar, and outline with brighter, stable cool-neutral surfaces and clearer separators. Settings now uses a fixed category sidebar with scrollable cards, keeping category changes and window resizing stable.</li>
+</ul>
+<h4>Fixed</h4>
+<ul>
+<li>Fixed All Spaces mode failing to reliably appear in other apps&#x27; native full-screen Spaces. Pinned documents now use reusable auxiliary panels that retain the existing editor content, window position, tabs, selection, undo, and input-method state.</li>
+<li>Fixed pauses and blank transitions when opening several sidebar files as tabs in All Spaces mode. New tabs now join incrementally and prewarm without rebuilding existing tabs.</li>
+<li>Fixed the area outside the app icon&#x27;s rounded shape appearing as an opaque square in Finder, Quick Look, and DMGs, with alpha-channel validation added to the build.</li>
+</ul>
+]]></description>
+            <enclosure url="https://github.com/yingkaisun-kai/floralmd/releases/download/v2026.7.4/FloralMD-2026.7.4.dmg"
+                       sparkle:version="5"
+                       sparkle:shortVersionString="2026.7.4"
+                       sparkle:edSignature="NBIYqpSQTu5gHJNfZCmUEgl6tlOT9J1F5/xcpCUT7TykPliXywKxmuyVb7nc3ltmuGZLjZJlZftTqvC03RXpBg=="
+                       length="11421261"
+                       type="application/x-apple-diskimage"/>
+        </item>
+        <item>
             <title>FloralMD 2026.7.3</title>
             <pubDate>Thu, 16 Jul 2026 17:54:22 +0000</pubDate>
             <description><![CDATA[
