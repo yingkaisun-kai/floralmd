@@ -11,7 +11,26 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
-## [Unreleased]
+## [2026.7.6] — 2026-07-18
+
+### 中文
+
+#### 新增
+- 文件侧栏新增符合 macOS 习惯的右键菜单，可打开或重命名 Markdown 文件、在 Finder
+  中显示文件与文件夹、复制路径，并在安全处理未保存标签后将文件移到废纸篓。
+
+#### 修复
+- 修复打开第二个文件并出现原生标签栏后，左上角大纲按钮被标签栏压住的问题。
+
+### English
+
+#### Added
+- Added a macOS-style file-sidebar context menu for opening and renaming Markdown files,
+  revealing files and folders in Finder, copying paths, and safely moving files to the Trash
+  after reviewing unsaved tabs.
+
+#### Fixed
+- Fixed the outline button being clipped by the native tab bar after opening a second file.
 
 ## [2026.7.5] — 2026-07-18
 

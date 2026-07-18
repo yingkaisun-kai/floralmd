@@ -1,6 +1,28 @@
 import AppKit
 import FloralMDCore
 
+private final class DocumentNavigationTableView: NSTableView {
+    var contextMenuForRow: ((Int) -> NSMenu?)?
+    var performCommandDelete: (() -> Bool)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let targetRow = row(at: point)
+        guard targetRow >= 0 else { return nil }
+        selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
+        window?.makeFirstResponder(self)
+        return contextMenuForRow?(targetRow)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.keyCode == 51, modifiers == .command, performCommandDelete?() == true {
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
 /// Left-side repository file tree and read-only Git status.
 /// Open documents are intentionally left to macOS's native window tabs.
 final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
@@ -41,7 +63,7 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
     private let locationLabel = NSTextField(labelWithString: "")
     private let separator = QuietSidebarSeparatorView()
     private let scrollView = NSScrollView()
-    private let tableView = NSTableView()
+    private let tableView = DocumentNavigationTableView()
     private var fileRows: [FileTreeRow] = []
     private var currentFileURL: URL?
     private var fileRootURL: URL?
@@ -58,6 +80,8 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
     var onOpenFile: ((URL) -> Void)?
     var onRenameFile: ((URL, String,
                         @escaping @MainActor (Result<URL, Error>) -> Void) -> Void)?
+    var canMoveFileToTrash: ((URL) -> Bool)?
+    var onMoveFileToTrash: ((URL) -> Void)?
     var onWidthChange: ((CGFloat, TimeInterval) -> Void)?
 
     init(frame frameRect: NSRect) {
@@ -91,6 +115,12 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
         tableView.target = self
         tableView.action = #selector(activateSelection(_:))
         tableView.doubleAction = #selector(beginRenameFromDoubleClick(_:))
+        tableView.contextMenuForRow = { [weak self] row in
+            self?.contextMenu(forRow: row)
+        }
+        tableView.performCommandDelete = { [weak self] in
+            self?.moveSelectedFileToTrash() ?? false
+        }
 
         scrollView.documentView = tableView
         scrollView.drawsBackground = false
@@ -495,6 +525,103 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
 
         guard clickIsInNameField(row: row, event: event) else { return }
         beginRename(entry.url, field: field, cell: cell)
+    }
+
+    private func contextMenu(forRow row: Int) -> NSMenu? {
+        cancelPendingOpen()
+        guard mode == .files,
+              renameSession == nil,
+              fileRows.indices.contains(row) else { return nil }
+        let entry = fileRows[row].entry
+        let canTrash = !entry.isDirectory && (canMoveFileToTrash?(entry.url) ?? false)
+        let kind: DocumentSidebarEntryKind = entry.isDirectory ? .directory : .markdownFile
+        let commands = DocumentSidebarContextMenuPolicy.commands(
+            for: kind,
+            canMoveToTrash: canTrash
+        )
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for command in commands {
+            if command == .moveToTrash { menu.addItem(.separator()) }
+            menu.addItem(contextMenuItem(for: command, url: entry.url))
+        }
+        return menu
+    }
+
+    private func contextMenuItem(for command: DocumentSidebarContextCommand,
+                                 url: URL) -> NSMenuItem {
+        let configuration: (String, String, Selector) = switch command {
+        case .open:
+            (AppCopy.text("Open", "打开"), "doc.text", #selector(openContextFile(_:)))
+        case .rename:
+            (AppCopy.text("Rename", "重命名"), "pencil", #selector(renameContextFile(_:)))
+        case .showInFinder:
+            (AppCopy.text("Show in Finder", "在 Finder 中显示"),
+             "folder", #selector(showContextFileInFinder(_:)))
+        case .copyPath:
+            (AppCopy.text("Copy Path", "复制路径"),
+             "doc.on.doc", #selector(copyContextFilePath(_:)))
+        case .moveToTrash:
+            (AppCopy.text("Move to Trash", "移到废纸篓"),
+             "trash", #selector(moveContextFileToTrash(_:)))
+        }
+        let item = NSMenuItem(
+            title: configuration.0,
+            action: configuration.2,
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.representedObject = url.standardizedFileURL
+        item.image = NSImage(
+            systemSymbolName: configuration.1,
+            accessibilityDescription: configuration.0
+        )
+        return item
+    }
+
+    @objc private func openContextFile(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        onOpenFile?(url)
+    }
+
+    @objc private func renameContextFile(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL,
+              let row = fileRows.firstIndex(where: {
+                  $0.entry.url.standardizedFileURL == url.standardizedFileURL
+              }),
+              !fileRows[row].entry.isDirectory,
+              let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+                as? QuietSidebarCellView,
+              let field = cell.textField else { return }
+        beginRename(url, field: field, cell: cell)
+    }
+
+    @objc private func showContextFileInFinder(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @objc private func copyContextFilePath(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(url.path, forType: .string)
+    }
+
+    @objc private func moveContextFileToTrash(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        onMoveFileToTrash?(url)
+    }
+
+    private func moveSelectedFileToTrash() -> Bool {
+        guard mode == .files,
+              renameSession == nil,
+              fileRows.indices.contains(tableView.selectedRow) else { return false }
+        let entry = fileRows[tableView.selectedRow].entry
+        guard !entry.isDirectory,
+              canMoveFileToTrash?(entry.url) == true else { return false }
+        onMoveFileToTrash?(entry.url)
+        return true
     }
 
     private func clickIsInNameField(row: Int, event: NSEvent? = NSApp.currentEvent) -> Bool {

@@ -3,6 +3,52 @@ import AppKit
 import UniformTypeIdentifiers
 import FloralMDCore
 
+@MainActor
+private protocol DocumentFileRecycling: AnyObject {
+    func recycle(_ url: URL, completion: @escaping @MainActor (Error?) -> Void)
+}
+
+@MainActor
+private final class WorkspaceDocumentFileRecycler: DocumentFileRecycling {
+    func recycle(_ url: URL, completion: @escaping @MainActor (Error?) -> Void) {
+        NSWorkspace.shared.recycle([url]) { destinations, error in
+            let result: Error? = if let error {
+                error
+            } else if destinations.keys.contains(where: {
+                $0.standardizedFileURL == url.standardizedFileURL
+            }) {
+                nil
+            } else {
+                NSError(
+                    domain: "FloralMD.DocumentTrash",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: AppCopy.text(
+                        "The file could not be moved to the Trash.",
+                        "无法将文件移到废纸篓。"
+                    )]
+                )
+            }
+            // NSWorkspace documents that this completion returns on the same
+            // dispatch queue as the caller. recycle() is main-actor-only, so
+            // preserve that contract without an unnecessary queue hop.
+            MainActor.assumeIsolated {
+                completion(result)
+            }
+        }
+    }
+}
+
+@MainActor
+private final class PendingDocumentTrashRequest {
+    let sourceURL: URL
+    weak var sourceDocument: Document?
+
+    init(sourceURL: URL, sourceDocument: Document) {
+        self.sourceURL = sourceURL.standardizedFileURL
+        self.sourceDocument = sourceDocument
+    }
+}
+
 /// Custom document controller that registers our Document class for markdown files.
 ///
 /// Without an Info.plist (SPM executable), NSDocumentController's default
@@ -13,6 +59,9 @@ class DocumentController: NSDocumentController {
 
     static let documentsDidChange = Notification.Name("FloralMDDocumentsDidChange")
     private var isPreparingAutomaticTermination = false
+    private let fileRecycler: any DocumentFileRecycling = WorkspaceDocumentFileRecycler()
+    private var pendingTrashURLs = Set<URL>()
+    private var pendingTrashCloseRequests: [ObjectIdentifier: PendingDocumentTrashRequest] = [:]
 
     override func removeDocument(_ document: NSDocument) {
         super.removeDocument(document)
@@ -277,6 +326,133 @@ class DocumentController: NSDocumentController {
         }
     }
 
+    @MainActor
+    func canMoveFileToTrash(at url: URL) -> Bool {
+        let source = url.standardizedFileURL
+        guard !pendingTrashURLs.contains(source),
+              (try? DocumentFileTrashOperation.validateSource(source)) != nil else { return false }
+        return openDocument(at: source)?.canBeginFileTrashOperation ?? true
+    }
+
+    /// Moves one Markdown file through the system Trash. Open documents first
+    /// receive the standard NSDocument close review, so Save / Don't Save /
+    /// Cancel remains the sole owner of unsaved-buffer policy.
+    @MainActor
+    func moveFileToTrash(at url: URL, from sourceDocument: Document) {
+        let source = url.standardizedFileURL
+        guard !pendingTrashURLs.contains(source) else { return }
+        do {
+            try DocumentFileTrashOperation.validateSource(source)
+        } catch {
+            sourceDocument.presentFileOperationError(localizedDocumentTrashError(error))
+            refreshAfterFileOperation(sourceDocument: sourceDocument)
+            return
+        }
+
+        pendingTrashURLs.insert(source)
+        guard let openDocument = openDocument(at: source) else {
+            recycleApprovedFile(at: source, openDocument: nil, sourceDocument: sourceDocument)
+            return
+        }
+        guard openDocument.canBeginFileTrashOperation else {
+            pendingTrashURLs.remove(source)
+            sourceDocument.presentFileOperationError(NSError(
+                domain: "FloralMD.DocumentTrash",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: AppCopy.text(
+                    "Finish resolving the file's external changes before moving it to the Trash.",
+                    "请先处理文件的外部修改，再将它移到废纸篓。"
+                )]
+            ))
+            return
+        }
+
+        let identifier = ObjectIdentifier(openDocument)
+        pendingTrashCloseRequests[identifier] = PendingDocumentTrashRequest(
+            sourceURL: source,
+            sourceDocument: sourceDocument
+        )
+        openDocument.canClose(
+            withDelegate: self,
+            shouldClose: #selector(document(_:shouldMoveToTrash:contextInfo:)),
+            contextInfo: nil
+        )
+    }
+
+    @objc private func document(_ document: NSDocument,
+                                shouldMoveToTrash shouldClose: Bool,
+                                contextInfo: UnsafeMutableRawPointer?) {
+        guard let openDocument = document as? Document else { return }
+        let identifier = ObjectIdentifier(openDocument)
+        guard let request = pendingTrashCloseRequests.removeValue(forKey: identifier) else {
+            return
+        }
+        guard shouldClose else {
+            pendingTrashURLs.remove(request.sourceURL)
+            return
+        }
+        recycleApprovedFile(
+            at: request.sourceURL,
+            openDocument: openDocument,
+            sourceDocument: request.sourceDocument ?? openDocument
+        )
+    }
+
+    private func recycleApprovedFile(at url: URL,
+                                     openDocument: Document?,
+                                     sourceDocument: Document) {
+        do {
+            try DocumentFileTrashOperation.validateSource(url)
+        } catch {
+            pendingTrashURLs.remove(url)
+            sourceDocument.presentFileOperationError(localizedDocumentTrashError(error))
+            refreshAfterFileOperation(sourceDocument: sourceDocument)
+            return
+        }
+        if let openDocument, !openDocument.beginFileTrashOperation() {
+            pendingTrashURLs.remove(url)
+            sourceDocument.presentFileOperationError(NSError(
+                domain: "FloralMD.DocumentTrash",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: AppCopy.text(
+                    "Finish resolving the file's external changes before moving it to the Trash.",
+                    "请先处理文件的外部修改，再将它移到废纸篓。"
+                )]
+            ))
+            return
+        }
+
+        fileRecycler.recycle(url) { [weak self, weak openDocument, weak sourceDocument] error in
+            guard let self else { return }
+            self.pendingTrashURLs.remove(url)
+            if let error {
+                openDocument?.finishFileTrashOperation(succeeded: false)
+                sourceDocument?.presentFileOperationError(error)
+                if let sourceDocument {
+                    self.refreshAfterFileOperation(sourceDocument: sourceDocument)
+                }
+                return
+            }
+
+            openDocument?.finishFileTrashOperation(succeeded: true)
+            openDocument?.close()
+            if openDocument == nil, let sourceDocument {
+                self.refreshAfterFileOperation(sourceDocument: sourceDocument)
+            }
+        }
+    }
+
+    private func openDocument(at url: URL) -> Document? {
+        documents.compactMap { $0 as? Document }.first {
+            $0.fileURL?.standardizedFileURL == url.standardizedFileURL
+        }
+    }
+
+    private func refreshAfterFileOperation(sourceDocument: Document) {
+        NotificationCenter.default.post(name: Self.documentsDidChange, object: self)
+        sourceDocument.refreshNavigationSidebar()
+    }
+
     /// Closes the most-recently-opened blank Untitled window the user never
     /// typed into — e.g. the automatic blank document from launch — once a
     /// real file opens. Only the last one, so opening several Untitled
@@ -294,6 +470,27 @@ class DocumentController: NSDocumentController {
         }
         stale?.close()
     }
+}
+
+private func localizedDocumentTrashError(_ error: Error) -> Error {
+    guard let trashError = error as? DocumentFileTrashError else { return error }
+    let message: String = switch trashError {
+    case .sourceMissing:
+        AppCopy.text(
+            "The original file no longer exists. Refresh the sidebar and try again.",
+            "原文件已不存在，请刷新侧栏后重试。"
+        )
+    case .sourceIsDirectory:
+        AppCopy.text(
+            "This version moves Markdown files to the Trash, not folders.",
+            "当前版本只能将 Markdown 文件移到废纸篓，不支持文件夹。"
+        )
+    }
+    return NSError(
+        domain: "FloralMD.DocumentTrash",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: message]
+    )
 }
 
 func localizedDocumentRenameError(_ error: Error) -> Error {

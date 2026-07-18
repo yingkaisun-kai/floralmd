@@ -52,6 +52,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     private var pendingExternalContent: String?
     private var isPresentingExternalConflict = false
     private var externalFileMonitor: ExternalFileMonitor?
+    private var isPerformingFileTrash = false
     private var activeOwnFileWrites = 0
     private var shouldCheckExternalFileAfterOwnWrites = false
     private var mostRecentOwnWriteSnapshot: DocumentOwnWriteSnapshot?
@@ -365,6 +366,17 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
                                   from: self,
                                   completion: completion)
         }
+        navigationSidebar.canMoveFileToTrash = { url in
+            guard let controller = NSDocumentController.shared as? DocumentController else {
+                return false
+            }
+            return controller.canMoveFileToTrash(at: url)
+        }
+        navigationSidebar.onMoveFileToTrash = { [weak self] url in
+            guard let self,
+                  let controller = NSDocumentController.shared as? DocumentController else { return }
+            controller.moveFileToTrash(at: url, from: self)
+        }
         navigationSidebar.onWidthChange = { [weak self] width, duration in
             guard let self else { return }
             self.sidebarSessionState.setNavigationExpanded(
@@ -399,6 +411,10 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         containerView.addSubview(outlineSidebar)
         outlineSidebar.installConstraints(in: containerView, leadingOffset: navigationWidth)
         outlineFloatingButton = OutlineFloatingButton(frame: initialLayout.outlineControlFrame)
+        // Adding or removing a native tab bar changes the content-view height
+        // without resizing the window. Keep the button anchored to the canvas
+        // top even when NSWindow.didResize is therefore not delivered.
+        outlineFloatingButton.autoresizingMask = DocumentPaneLayout.outlineControlAutoresizingMask
         outlineFloatingButton.target = self
         outlineFloatingButton.action = #selector(toggleOutlineSidebar(_:))
         containerView.addSubview(outlineFloatingButton)
@@ -1479,6 +1495,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
     private func checkForExternalFileChange() {
         guard let url = fileURL, editor != nil else { return }
+        guard !isPerformingFileTrash else { return }
         // An own coordinated write can notify NSFilePresenter while it is in
         // flight. Its completion re-checks the persisted save snapshot, so
         // reading the path here would only observe a partial or stale phase.
@@ -1518,6 +1535,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     private func restartExternalFileMonitor() {
         externalFileMonitor?.stop()
         externalFileMonitor = nil
+        guard !isPerformingFileTrash else { return }
         guard activeOwnFileWrites == 0 else { return }
         guard let url = fileURL, editor != nil else { return }
 
@@ -1629,6 +1647,44 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             } else {
                 self.pendingExternalContent = nil
             }
+        }
+    }
+
+    var canBeginFileTrashOperation: Bool {
+        !isPerformingFileTrash
+            && !isPresentingExternalConflict
+            && pendingExternalContent == nil
+    }
+
+    /// Pauses the path-bound vnode monitor while NSWorkspace moves the file.
+    /// NSDocument remains open until the recycle completion succeeds, so a
+    /// permission failure leaves the tab and its in-memory buffer intact.
+    @discardableResult
+    func beginFileTrashOperation() -> Bool {
+        guard canBeginFileTrashOperation else { return false }
+        isPerformingFileTrash = true
+        externalFileMonitor?.stop()
+        externalFileMonitor = nil
+        return true
+    }
+
+    func finishFileTrashOperation(succeeded: Bool) {
+        guard isPerformingFileTrash else { return }
+        if succeeded {
+            // Keep monitoring suppressed until close() tears down this
+            // document; the original path no longer exists.
+            return
+        }
+        isPerformingFileTrash = false
+        restartExternalFileMonitor()
+    }
+
+    func presentFileOperationError(_ error: Error) {
+        let alert = NSAlert(error: error)
+        if let presentationWindow {
+            alert.beginSheetModal(for: presentationWindow)
+        } else {
+            alert.runModal()
         }
     }
 

@@ -49,6 +49,27 @@ struct DocumentPaneLayoutTests {
             == 500 - DocumentPaneLayout.documentControlInset)
     }
 
+    @Test("Outline control stays top-anchored when a native tab bar shortens the canvas")
+    @MainActor
+    func outlineControlTracksCanvasHeight() {
+        let originalSize = NSSize(width: 900, height: 500)
+        let layout = DocumentPaneLayout(contentSize: originalSize,
+                                        navigationSidebarWidth: 0,
+                                        outlineSidebarWidth: 0,
+                                        minimapWidth: 72,
+                                        statusBarHeight: 22)
+        let canvas = NSView(frame: NSRect(origin: .zero, size: originalSize))
+        let control = NSView(frame: layout.outlineControlFrame)
+        control.autoresizingMask = DocumentPaneLayout.outlineControlAutoresizingMask
+        canvas.addSubview(control)
+
+        canvas.setFrameSize(NSSize(width: originalSize.width, height: 470))
+
+        #expect(control.frame.maxY == 470 - DocumentPaneLayout.documentControlInset)
+        #expect(control.frame.minX == layout.outlineControlFrame.minX)
+        #expect(control.frame.size == layout.outlineControlFrame.size)
+    }
+
     @Test("Collapsed sidebars reserve no content rail with or without a minimap")
     func collapsedSidebarsReclaimAllContentWidth() {
         let contentSize = NSSize(width: 800, height: 560)

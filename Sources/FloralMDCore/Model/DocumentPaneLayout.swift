@@ -6,6 +6,7 @@ import AppKit
 public struct DocumentPaneLayout: Equatable {
     public static let documentControlSize: CGFloat = 32
     public static let documentControlInset: CGFloat = 14
+    public static let outlineControlAutoresizingMask: NSView.AutoresizingMask = [.minYMargin]
 
     public let outlineSidebarFrame: NSRect
     public let editorFrame: NSRect
