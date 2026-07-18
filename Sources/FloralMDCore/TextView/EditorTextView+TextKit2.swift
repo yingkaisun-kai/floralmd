@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 
 // MARK: - TextKit 2 Support
@@ -663,10 +664,11 @@ extension EditorTextView {
     /// Reserves vertical room for an overlay taller than the text line that
     /// carries it. A `FragmentOverlay` only reserves horizontal advance (kern),
     /// so — unlike the old `NSTextAttachment`, which grew its line fragment —
-    /// a tall image (e.g. inline math scaled to a heading's size) would
-    /// otherwise overlap the line below. Raises the enclosing paragraph's
-    /// `minimumLineHeight` to fit, preserving any other paragraph attributes.
-    func reserveLineHeight(_ height: CGFloat, forOverlayAt location: Int,
+    /// a tall image or equation would otherwise overlap adjacent lines. Reserve
+    /// the part above the baseline as line height and the descent as trailing
+    /// paragraph space; putting the full image in `minimumLineHeight` pins the
+    /// baseline too low and lets the descent hang into the next paragraph.
+    func reserveLineHeight(ascent: CGFloat, descent: CGFloat, forOverlayAt location: Int,
                            in result: NSMutableAttributedString) {
         guard location < result.length else { return }
         let ns = result.string as NSString
@@ -676,9 +678,10 @@ extension EditorTextView {
         let para = ns.paragraphRange(for: NSRange(location: location, length: 0))
         let base = (result.attribute(.paragraphStyle, at: location, effectiveRange: nil)
             as? NSParagraphStyle) ?? bodyParagraphStyle
-        guard height > base.minimumLineHeight else { return }
+        guard ascent > base.minimumLineHeight || descent > base.paragraphSpacing else { return }
         let ps = (base.mutableCopy() as! NSMutableParagraphStyle)
-        ps.minimumLineHeight = height
+        ps.minimumLineHeight = max(base.minimumLineHeight, ascent)
+        ps.paragraphSpacing = max(base.paragraphSpacing, descent)
         result.addAttribute(.paragraphStyle, value: ps, range: para)
     }
 }

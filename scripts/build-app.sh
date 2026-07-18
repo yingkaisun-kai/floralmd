@@ -1,4 +1,5 @@
 #!/bin/bash
+# Modified from Edmund by Yingkai Sun for FloralMD.
 # Build an isolated local Debug app or the production app used by Release CI.
 #
 # Local default:
@@ -51,6 +52,7 @@ case "$VARIANT" in
         BUNDLE_ID="com.yingkaisun.floralmd.debug"
         BUNDLE="build/${APP_NAME}.app"
         BUILD_CONFIGURATION="debug"
+        BUILD_PRODUCTS_DIR=".build/debug"
         BUNDLE_EXECUTABLE="floralmd-debug"
         INFO_PLIST="Resources/Debug/Info.plist"
         QUICK_LOOK_NAME="FloralMD-Debug-QuickLook"
@@ -65,6 +67,7 @@ case "$VARIANT" in
         BUNDLE_ID="com.yingkaisun.floralmd"
         BUNDLE="build/${APP_NAME}.app"
         BUILD_CONFIGURATION="release"
+        BUILD_PRODUCTS_DIR=".build/apple/Products/Release"
         BUNDLE_EXECUTABLE="floralmd"
         INFO_PLIST="Info.plist"
         QUICK_LOOK_NAME="FloralMDQuickLook"
@@ -85,7 +88,16 @@ SOURCE_QUICK_LOOK_EXECUTABLE="FloralMDQuickLook"
 QUICK_LOOK_BUNDLE="${BUNDLE}/Contents/PlugIns/${QUICK_LOOK_NAME}.appex"
 
 build_swift() {
-    FLORALMD_BUILD_VARIANT="$VARIANT" swift build -c "$BUILD_CONFIGURATION" "$@" 2>&1 | tail -3
+    if [ "$VARIANT" = "production" ]; then
+        # Xcode's SwiftPM integration generates the app-aware Bundle.module
+        # accessor (resourceURL, framework resourceURL, then bundleURL). The
+        # native CLI build generates only bundleURL, which cannot find a
+        # resource copied into a standard macOS app's Contents/Resources.
+        FLORALMD_BUILD_VARIANT="$VARIANT" swift build -c "$BUILD_CONFIGURATION" \
+            --build-system xcode "$@" 2>&1 | tail -3
+    else
+        FLORALMD_BUILD_VARIANT="$VARIANT" swift build -c "$BUILD_CONFIGURATION" "$@" 2>&1 | tail -3
+    fi
 }
 
 echo "Building ${VARIANT} app binary..."
@@ -99,32 +111,11 @@ else
     fi
 fi
 
-# SwiftPM's generated SwiftMath accessor looks beside Bundle.main by default.
-# A sealed macOS app may contain only Contents/ at the bundle root, so point the
-# accessor at Contents/Resources and relink when the generated source is fresh.
-SWIFTMATH_ACCESSOR="$(find .build -path "*/${BUILD_CONFIGURATION}/SwiftMath.build/DerivedSources/resource_bundle_accessor.swift" -print -quit)"
-if [ -z "$SWIFTMATH_ACCESSOR" ]; then
-    echo "Error: SwiftMath resource accessor not found after ${VARIANT} build." >&2
-    exit 1
-fi
-if grep -q 'Bundle.main.bundleURL' "$SWIFTMATH_ACCESSOR"; then
-    echo "Relinking SwiftMath with standard app resource lookup..."
-    sed -i '' 's/Bundle\.main\.bundleURL/Bundle.main.resourceURL!/g' "$SWIFTMATH_ACCESSOR"
-    if [ "$VARIANT" = "production" ]; then
-        build_swift
-    else
-        build_swift --product floralmd
-        if [ "$INCLUDE_QUICK_LOOK" = true ]; then
-            build_swift --product FloralMDQuickLook
-        fi
-    fi
-fi
-
 echo "Creating ${APP_NAME}.app bundle..."
 rm -rf "$BUNDLE"
 mkdir -p "${BUNDLE}/Contents/MacOS" "${BUNDLE}/Contents/Resources"
 
-cp ".build/${BUILD_CONFIGURATION}/${SOURCE_EXECUTABLE}" \
+cp "${BUILD_PRODUCTS_DIR}/${SOURCE_EXECUTABLE}" \
     "${BUNDLE}/Contents/MacOS/${BUNDLE_EXECUTABLE}"
 cp "$INFO_PLIST" "${BUNDLE}/Contents/Info.plist"
 
@@ -147,6 +138,26 @@ fi
 
 cp Resources/AppIcon.icns "${BUNDLE}/Contents/Resources/AppIcon.icns"
 cp LICENSE NOTICE "${BUNDLE}/Contents/Resources/"
+mkdir -p "${BUNDLE}/Contents/Resources/LICENSES"
+cp LICENSES/lucide.txt "${BUNDLE}/Contents/Resources/LICENSES/Lucide.txt"
+
+copy_dependency_notice() {
+    local source="$1"
+    local destination="$2"
+    if [ ! -f "$source" ]; then
+        echo "Error: dependency notice is missing after SwiftPM resolution: ${source}" >&2
+        exit 1
+    fi
+    cp "$source" "${BUNDLE}/Contents/Resources/LICENSES/${destination}"
+}
+
+copy_dependency_notice ".build/checkouts/swift-markdown/LICENSE.txt" "Swift-Markdown-LICENSE.txt"
+copy_dependency_notice ".build/checkouts/swift-markdown/NOTICE.txt" "Swift-Markdown-NOTICE.txt"
+copy_dependency_notice ".build/checkouts/swift-cmark/COPYING" "Swift-CMark-COPYING.txt"
+copy_dependency_notice ".build/checkouts/SwiftMath/LICENSE" "SwiftMath-LICENSE.txt"
+if [ "$INCLUDE_SPARKLE" = true ]; then
+    copy_dependency_notice ".build/checkouts/Sparkle/LICENSE" "Sparkle-LICENSE.txt"
+fi
 for localization in Resources/*.lproj; do
     cp -R "$localization" "${BUNDLE}/Contents/Resources/"
 done
@@ -162,7 +173,7 @@ fi
 if [ "$INCLUDE_QUICK_LOOK" = true ]; then
     echo "Embedding ${QUICK_LOOK_NAME} extension..."
     mkdir -p "${QUICK_LOOK_BUNDLE}/Contents/MacOS" "${QUICK_LOOK_BUNDLE}/Contents/Resources"
-    cp ".build/${BUILD_CONFIGURATION}/${SOURCE_QUICK_LOOK_EXECUTABLE}" \
+    cp "${BUILD_PRODUCTS_DIR}/${SOURCE_QUICK_LOOK_EXECUTABLE}" \
         "${QUICK_LOOK_BUNDLE}/Contents/MacOS/${QUICK_LOOK_BUNDLE_EXECUTABLE}"
     cp "$QUICK_LOOK_INFO_PLIST" "${QUICK_LOOK_BUNDLE}/Contents/Info.plist"
     # An .appex is a separate bundle and does not reliably inherit the host
@@ -197,7 +208,7 @@ if [ "$INCLUDE_SPARKLE" = true ]; then
 fi
 
 echo "Copying SwiftPM resource bundles..."
-for resource_bundle in ".build/${BUILD_CONFIGURATION}"/*.bundle; do
+for resource_bundle in "${BUILD_PRODUCTS_DIR}"/*.bundle; do
     if [ -e "$resource_bundle" ]; then
         cp -R "$resource_bundle" "${BUNDLE}/Contents/Resources/"
     fi
@@ -223,9 +234,39 @@ ACTUAL_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${BU
 ACTUAL_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "${BUNDLE}/Contents/Info.plist")"
 ACTUAL_EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${BUNDLE}/Contents/Info.plist")"
 BINARY_STRINGS="$(strings "${BUNDLE}/Contents/MacOS/${BUNDLE_EXECUTABLE}")"
+BUNDLE_URL_SELECTORS="$(otool -ov "${BUNDLE}/Contents/MacOS/${BUNDLE_EXECUTABLE}" | \
+    sed -n '/ bundleURL$/p; / resourceURL$/p')"
 [ "$ACTUAL_BUNDLE_ID" = "$BUNDLE_ID" ] || { echo "Error: wrong bundle identifier." >&2; exit 1; }
 [ "$ACTUAL_NAME" = "$APP_NAME" ] || { echo "Error: wrong display name." >&2; exit 1; }
 [ "$ACTUAL_EXECUTABLE" = "$BUNDLE_EXECUTABLE" ] || { echo "Error: wrong executable name." >&2; exit 1; }
+if [ "$VARIANT" = "production" ] && \
+   ! grep -Eq '[[:space:]]resourceURL$' <<< "$BUNDLE_URL_SELECTORS"; then
+    echo "Error: SwiftMath accessor does not use Bundle.main.resourceURL." >&2
+    exit 1
+fi
+if [ ! -d "${BUNDLE}/Contents/Resources/SwiftMath_SwiftMath.bundle" ]; then
+    echo "Error: SwiftMath resource bundle is missing from Contents/Resources." >&2
+    exit 1
+fi
+
+REQUIRED_LEGAL_RESOURCES=(
+    LICENSE
+    NOTICE
+    LICENSES/Lucide.txt
+    LICENSES/Swift-Markdown-LICENSE.txt
+    LICENSES/Swift-Markdown-NOTICE.txt
+    LICENSES/Swift-CMark-COPYING.txt
+    LICENSES/SwiftMath-LICENSE.txt
+)
+if [ "$INCLUDE_SPARKLE" = true ]; then
+    REQUIRED_LEGAL_RESOURCES+=(LICENSES/Sparkle-LICENSE.txt)
+fi
+for legal_resource in "${REQUIRED_LEGAL_RESOURCES[@]}"; do
+    [ -s "${BUNDLE}/Contents/Resources/${legal_resource}" ] || {
+        echo "Error: app bundle is missing legal resource ${legal_resource}." >&2
+        exit 1
+    }
+done
 
 # Finder and Launch Services prefer localized InfoPlist.strings values over the
 # main plist, so validate the signed resources instead of trusting only the

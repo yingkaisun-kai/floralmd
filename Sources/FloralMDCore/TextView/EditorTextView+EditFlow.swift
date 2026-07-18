@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 
 /// The edit pipeline: how keystrokes flow from NSTextView into `rawSource`,

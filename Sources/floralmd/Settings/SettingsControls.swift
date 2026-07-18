@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 // Shared Settings view helpers.
 
 import SwiftUI

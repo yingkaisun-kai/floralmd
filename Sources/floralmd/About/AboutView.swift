@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 // Note: `swift run` does not bundle resources, so the app icon and version
 // string will not render correctly. Build and launch via the Debug app bundle.
 import SwiftUI

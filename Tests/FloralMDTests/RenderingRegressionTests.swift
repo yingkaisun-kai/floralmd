@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Testing
 import AppKit
 @testable import FloralMDCore
@@ -29,24 +30,27 @@ struct RenderingRegressionTests {
 
     // MARK: Inline math reserves line height (no overlap with the next line)
 
-    @Test("Inline math line is tall enough for the equation image")
+    @Test("Inline math line reserves the equation above and below its baseline")
     @MainActor func inlineMathReservesLineHeight() {
         let editor = makeEditor()
         // A heading line that wraps the equation onto the same logical line.
         let styled = editor.styleBlock("## Heading $\\frac{a}{b}+x^2$")
-        // The overlay's image height.
-        var overlayH: CGFloat = 0
+        var overlay: FragmentOverlay?
         styled.enumerateAttribute(.fragmentOverlay,
                                   in: NSRange(location: 0, length: styled.length)) { v, _, _ in
-            if let o = v as? FragmentOverlay { overlayH = max(overlayH, o.bounds.height) }
+            if let candidate = v as? FragmentOverlay { overlay = candidate }
         }
-        #expect(overlayH > 0)
-        // The paragraph style on the math line must reserve at least the image
-        // height (so the tall equation can't overlap the following line).
+        #expect(overlay != nil)
+        guard let overlay else { return }
+        let descent = -overlay.bounds.minY
+        let ascent = overlay.bounds.height - descent
+        // Reserve ascent in the line box and descent after it. Putting the full
+        // image height into minimumLineHeight pins the baseline at the bottom
+        // and lets the equation's tail overlap the following line.
         let mathLoc = (styled.string as NSString).range(of: "$").location
         let ps = styled.attribute(.paragraphStyle, at: mathLoc, effectiveRange: nil) as? NSParagraphStyle
-        #expect((ps?.minimumLineHeight ?? 0) >= overlayH - 0.5,
-                "inline math line must reserve the equation's height")
+        #expect((ps?.minimumLineHeight ?? 0) >= ascent - 0.5)
+        #expect((ps?.paragraphSpacing ?? 0) >= descent - 0.5)
     }
 
     // MARK: Full-width image doesn't double its reserved height

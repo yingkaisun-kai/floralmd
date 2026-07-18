@@ -12,11 +12,15 @@ final class PreviewProvider: QLPreviewProvider, @preconcurrency QLPreviewingCont
                         completionHandler handler: @escaping (QLPreviewReply?, Error?) -> Void) {
         do {
             let markdown = try String(contentsOf: request.fileURL, encoding: .utf8)
+            // A data-based Quick Look reply is immutable after generation, and
+            // its HTML host does not reliably honor prefers-color-scheme. Resolve
+            // AppKit's current appearance for each newly opened preview instead.
+            let dark = AppearanceResolver.isDark(NSApplication.shared.effectiveAppearance)
             let html = DocumentHTML.full(
                 markdown: markdown,
                 theme: .default,
                 callouts: Callout.defaultStyles,
-                dark: false,
+                dark: dark,
                 baseURL: request.fileURL.deletingLastPathComponent(),
                 options: ReadRenderOptions(preserveBlankLines: true,
                                            allowRemoteImages: false,

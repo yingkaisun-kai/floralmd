@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 import UniformTypeIdentifiers
 import FloralMDCore

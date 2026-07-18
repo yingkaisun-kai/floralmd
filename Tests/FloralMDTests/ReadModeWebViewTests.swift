@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Testing
 import WebKit
 @testable import FloralMDCore
@@ -28,6 +29,16 @@ struct ReadModeWebViewTests {
         #expect(webView.underPageBackgroundColor?.alphaComponent == 0)
         webView.usesTransparentBackground = false
         #expect(!webView.usesTransparentBackground)
+    }
+
+    @Test("scroll-position bridge parser accepts only complete pairs")
+    func scrollPositionParser() {
+        let parsed = ReadModeWebView.parseScrollPosition("42,0.375")
+        #expect(parsed?.line == 42)
+        #expect(parsed?.fraction == 0.375)
+        #expect(ReadModeWebView.parseScrollPosition("") == nil)
+        #expect(ReadModeWebView.parseScrollPosition("42") == nil)
+        #expect(ReadModeWebView.parseScrollPosition("line,0.5") == nil)
     }
 
     @Test("navigation policy only allows read-mode routes and browser handoffs")

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Modified from Edmund by Yingkai Sun for FloralMD.
 # Build, sign, and prepare a FloralMD release locally.
 #
 # Usage: FLORALMD_FEED_DIR=/path/to/feed-checkout ./scripts/release.sh [--publish]

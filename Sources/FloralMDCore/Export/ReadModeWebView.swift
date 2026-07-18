@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 import WebKit
 
@@ -46,6 +47,9 @@ public final class ReadModeWebView: WKWebView {
     /// destination (e.g. `[text](other.md)`), routed the same way.
     public var onOpenInternalLink: ((String) -> Void)?
 
+    /// Called once a rendered document and any pending viewport restore are ready.
+    public var onLoadFinished: (() -> Void)?
+
     /// Lets the document window supply its own translucent background while
     /// leaving rendered text and inlined assets fully opaque.
     public var usesTransparentBackground = false {
@@ -62,6 +66,11 @@ public final class ReadModeWebView: WKWebView {
                           callouts: [String: CalloutStyle], baseURL: URL?,
                           options: ReadRenderOptions)?
 
+    private var pendingScrollRestore: (line: Int, fraction: Double)?
+    private var loadGeneration = 0
+    private var hasLoadedOnce = false
+    private var lastLoadedHTML: String?
+
     /// Renders `markdown` with the given theme; appearance is resolved from the
     /// view itself. `baseURL` is the document's directory (for resolving relative
     /// image paths to inline).
@@ -74,19 +83,120 @@ public final class ReadModeWebView: WKWebView {
         reloadHTML()
     }
 
+    public func setPendingScrollRestore(line: Int, fraction: Double) {
+        pendingScrollRestore = (line: line, fraction: fraction)
+    }
+
     func reloadHTML() {
         guard let p = pending else { return }
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        guard hasLoadedOnce else {
+            hasLoadedOnce = true
+            performLoad(p)
+            return
+        }
+        guard pendingScrollRestore == nil else {
+            performLoad(p)
+            return
+        }
+        let generation = loadGeneration
+        readScrollPosition { [weak self] restored in
+            guard let self, self.loadGeneration == generation else { return }
+            self.pendingScrollRestore = restored
+            self.loadGeneration += 1
+            self.performLoad(p)
+        }
+    }
+
+    private func performLoad(_ p: (markdown: String, theme: EditorTheme,
+                                   callouts: [String: CalloutStyle], baseURL: URL?,
+                                   options: ReadRenderOptions)) {
+        let dark = AppearanceResolver.isDark(effectiveAppearance)
+        underPageBackgroundColor = usesTransparentBackground
+            ? .clear : (NSColor(hex: dark ? "#1e1e1e" : "#ffffff") ?? .textBackgroundColor)
         let html = DocumentHTML.full(markdown: p.markdown, theme: p.theme,
                                      callouts: p.callouts, dark: dark,
                                      baseURL: p.baseURL, options: p.options,
                                      transparentBackground: usesTransparentBackground)
+        guard html != lastLoadedHTML else {
+            applyPendingScrollRestoreAndNotify()
+            return
+        }
+        lastLoadedHTML = html
         loadHTMLString(html, baseURL: ReadModeNavigationPolicy.trustedBaseURL)
     }
 
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         reloadHTML()
+    }
+
+    fileprivate func handleDidFinishLoad() {
+        applyPendingScrollRestoreAndNotify()
+    }
+
+    private func applyPendingScrollRestoreAndNotify() {
+        if let restore = pendingScrollRestore {
+            pendingScrollRestore = nil
+            setScrollPosition(line: restore.line, fraction: restore.fraction)
+        }
+        onLoadFinished?()
+    }
+
+    // Host-injected JavaScript remains available while page/content JavaScript
+    // stays disabled. Templates below contain numeric Swift values only — never
+    // user or document content — so the renderer's security boundary is intact.
+    public func setScrollPosition(line: Int, fraction: Double) {
+        let clamped = min(max(fraction, 0), 1)
+        let js = """
+        (function() { \
+        var el = document.getElementById('floralmd-l\(line)'); \
+        if (el) { var se = document.scrollingElement; \
+        se.scrollTop = el.getBoundingClientRect().top + se.scrollTop + \(String(describing: clamped)) * el.offsetHeight; } \
+        })()
+        """
+        evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    public func readScrollPosition(completion: @escaping ((line: Int, fraction: Double)?) -> Void) {
+        let js = """
+        (function() {
+          var nodes = document.querySelectorAll('[id^="floralmd-l"]');
+          if (nodes.length === 0) return '';
+          var top = document.scrollingElement.scrollTop;
+          var chosen = null;
+          for (var i = 0; i < nodes.length; i++) {
+            var elTop = nodes[i].getBoundingClientRect().top + top;
+            if (elTop <= top + 1) { chosen = nodes[i]; } else { break; }
+          }
+          var fraction;
+          if (!chosen) { chosen = nodes[0]; fraction = 0; }
+          else {
+            var chosenTop = chosen.getBoundingClientRect().top + top;
+            fraction = (top - chosenTop) / Math.max(1, chosen.offsetHeight);
+            if (fraction < 0) fraction = 0;
+            if (fraction > 1) fraction = 1;
+          }
+          return chosen.id.slice(10) + ',' + fraction;
+        })()
+        """
+        evaluateJavaScript(js) { result, error in
+            Task { @MainActor in
+                guard error == nil, let string = result as? String else {
+                    completion(nil)
+                    return
+                }
+                completion(Self.parseScrollPosition(string))
+            }
+        }
+    }
+
+    internal static func parseScrollPosition(_ string: String) -> (line: Int, fraction: Double)? {
+        guard !string.isEmpty else { return nil }
+        let parts = string.split(separator: ",", maxSplits: 1)
+        guard parts.count == 2,
+              let line = Int(parts[0]),
+              let fraction = Double(parts[1]) else { return nil }
+        return (line: line, fraction: fraction)
     }
 }
 
@@ -137,6 +247,10 @@ private final class ReadModeNavigationCoordinator: NSObject, WKNavigationDelegat
         case .cancel:
             return .cancel
         }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        owner?.handleDidFinishLoad()
     }
 }
 

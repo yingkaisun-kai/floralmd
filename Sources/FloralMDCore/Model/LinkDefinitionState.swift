@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Foundation
 
 /// Incremental backing for the document's link reference definitions.

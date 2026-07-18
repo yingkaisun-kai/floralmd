@@ -336,6 +336,13 @@ class ProductionUpdateIntegrationTests(unittest.TestCase):
         self.assertIn("Production bundle does not link and embed Sparkle", script)
         self.assertIn("Production binary has no manual update menu", script)
 
+    def test_bundle_builder_uses_and_verifies_app_aware_resource_lookup(self) -> None:
+        script = (ROOT / "scripts" / "build-app.sh").read_text(encoding="utf-8")
+        self.assertIn("--build-system xcode", script)
+        self.assertIn('BUILD_PRODUCTS_DIR=".build/apple/Products/Release"', script)
+        self.assertIn("SwiftMath accessor does not use Bundle.main.resourceURL", script)
+        self.assertIn("SwiftMath resource bundle is missing from Contents/Resources", script)
+
 
 if __name__ == "__main__":
     unittest.main()

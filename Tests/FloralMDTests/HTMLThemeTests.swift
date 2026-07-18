@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Testing
 import AppKit
 @testable import FloralMDCore
@@ -84,6 +85,14 @@ struct HTMLThemeTests {
         let out = css(dark: false)
         #expect(out.contains(".table-wrap { overflow-x: auto; margin: 1em 0; }"))
         #expect(!out.contains("overflow-wrap"))
+    }
+
+    @Test("Read headings and lists use the expanded vertical rhythm")
+    func expandedHeadingAndListSpacing() {
+        let out = css(dark: false)
+        #expect(out.contains("margin: 1.7em 0 0.7em;"))
+        #expect(out.contains("margin: 1.3em 0; padding-left: 2.25em;"))
+        #expect(out.contains("li { margin: 0.35em 0; }"))
     }
 
     @Test("Emits code token colors from the shared palette, per appearance")

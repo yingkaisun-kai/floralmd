@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 // SettingsWindowController — the Settings window.
 //
 // The window uses an AppKit split-view shell so navigation remains fixed while

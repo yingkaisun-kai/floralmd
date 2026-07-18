@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 // AppSettings — UserDefaults-backed model for every Settings value.
 // The rest of the app reads these accessors; the SwiftUI panes bind to the
 // same keys via @AppStorage.

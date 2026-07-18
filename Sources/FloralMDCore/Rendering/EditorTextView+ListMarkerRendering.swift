@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 
 /// List-item marker styling: maps a list item's leading whitespace to a nesting

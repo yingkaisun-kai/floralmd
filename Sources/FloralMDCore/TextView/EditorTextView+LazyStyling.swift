@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 
 // MARK: - Lazy Styling: idle drain + scroll promotion
@@ -184,6 +185,42 @@ extension EditorTextView {
         let unstyled = IndexSet(bounds.filter { !blocks[$0].isStyled })
         guard !unstyled.isEmpty else { return }
         recomposeDirty(unstyled, cursorInRaw: selectedRange().location)
+    }
+
+    /// Synchronously styles blocks from the document start through `offset`.
+    /// Mode-switch positioning uses this bounded path before asking TextKit 2
+    /// for absolute geometry, preventing a later idle restyle from moving it.
+    func ensureBlocksStyled(upTo offset: Int) {
+        guard let storage = textStorage, !isUpdating, !hasMarkedText(),
+              let last = blocks.lastIndex(where: { $0.range.location <= offset }) else { return }
+        let unstyled = (0...last).filter { !blocks[$0].isStyled }
+        guard !unstyled.isEmpty else { return }
+        isUpdating = true
+        let string = storage.string as NSString
+        let cursor = selectedRange().location
+        autoreleasepool {
+            storage.beginEditing()
+            for index in unstyled {
+                let cursorInBlock = index == activeBlockIndex
+                    ? max(0, cursor - blocks[index].range.location) : nil
+                restyleBlock(index, cursorInBlock: cursorInBlock)
+                blocks[index].isStyled = true
+                let separator = blocks[index].range.upperBound
+                if separator < string.length, string.character(at: separator) == 0x0A {
+                    storage.setAttributes(baseAttributes,
+                                          range: NSRange(location: separator, length: 1))
+                }
+            }
+            storage.endEditing()
+        }
+        if let tlm = textLayoutManager {
+            for index in unstyled where index < blocks.count {
+                if let range = blockTextRange(blocks[index].range, tlm) {
+                    tlm.invalidateLayout(for: range)
+                }
+            }
+        }
+        isUpdating = false
     }
 
     /// Observes clip-view scrolling for promotion. Called from

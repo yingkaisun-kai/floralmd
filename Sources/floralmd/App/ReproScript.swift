@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 #if DEBUG
 import AppKit
 import FloralMDCore

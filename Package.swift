@@ -1,4 +1,5 @@
 // swift-tools-version: 6.0
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Foundation
 import PackageDescription
 

@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 import SwiftMath
 
@@ -48,17 +49,23 @@ public enum DocumentHTML {
     // MARK: Math (SwiftMath → PNG data URI)
 
     private static let inlineMathPattern = "<span class=\"math-inline\" data-tex=\"([^\"]*)\"></span>"
-    private static let displayMathPattern = "<div class=\"math-display\" data-tex=\"([^\"]*)\"></div>"
+    private static let displayMathPattern = "<div( id=\"[^\"]*\")? class=\"math-display\" data-tex=\"([^\"]*)\"></div>"
+    private static let displayInlineMathPattern = "<span class=\"math-display-inline\" data-tex=\"([^\"]*)\"></span>"
 
     /// Quick Look extensions cannot use SwiftPM's generated root-level
     /// resource-bundle lookup without breaking the nested code signature.
     /// Preserve equations as readable source there rather than risking a crash.
     private static func fillMathAsSource(_ html: String) -> String {
         var out = replaceMatches(html, pattern: displayMathPattern) { groups in
-            let tex = unescapeAttr(groups[1])
-            return "<div class=\"math-display\"><code>\(HTMLRenderer.escape(tex))</code></div>"
+            let id = groups[1]
+            let tex = unescapeAttr(groups[2])
+            return "<div\(id) class=\"math-display\"><code>\(HTMLRenderer.escape(tex))</code></div>"
         }
         out = replaceMatches(out, pattern: inlineMathPattern) { groups in
+            let tex = unescapeAttr(groups[1])
+            return "<code>\(HTMLRenderer.escape(tex))</code>"
+        }
+        out = replaceMatches(out, pattern: displayInlineMathPattern) { groups in
             let tex = unescapeAttr(groups[1])
             return "<code>\(HTMLRenderer.escape(tex))</code>"
         }
@@ -68,14 +75,15 @@ public enum DocumentHTML {
     private static func fillMath(_ html: String, theme: EditorTheme, dark: Bool) -> String {
         let color = NSColor(hex: dark ? "#e6e6e6" : "#1a1a1a") ?? .textColor
         var out = replaceMatches(html, pattern: displayMathPattern) { groups in
-            let tex = unescapeAttr(groups[1])
+            let id = groups[1]
+            let tex = unescapeAttr(groups[2])
             guard let r = mathImage(latex: tex, display: true,
                                     fontSize: theme.fontSize, color: color),
                   let data = pngData(r.image, scale: 2) else {
-                return "<div class=\"math-display\"><code>\(HTMLRenderer.escape(tex))</code></div>"
+                return "<div\(id) class=\"math-display\"><code>\(HTMLRenderer.escape(tex))</code></div>"
             }
             let uri = "data:image/png;base64,\(data.base64EncodedString())"
-            return "<div class=\"math-display\"><img class=\"math\" style=\"height:\(fmt(r.image.size.height))px\" src=\"\(uri)\" alt=\"\(HTMLRenderer.attr(tex))\"></div>"
+            return "<div\(id) class=\"math-display\"><img class=\"math\" style=\"height:\(fmt(r.image.size.height))px\" src=\"\(uri)\" alt=\"\(HTMLRenderer.attr(tex))\"></div>"
         }
         out = replaceMatches(out, pattern: inlineMathPattern) { groups in
             let tex = unescapeAttr(groups[1])
@@ -89,6 +97,16 @@ public enum DocumentHTML {
             // the text baseline — same alignment the editor computes.
             return "<img class=\"math math-inline\" style=\"height:\(fmt(r.image.size.height))px; vertical-align:\(fmt(-r.descent))px\" src=\"\(uri)\" alt=\"\(HTMLRenderer.attr(tex))\">"
         }
+        out = replaceMatches(out, pattern: displayInlineMathPattern) { groups in
+            let tex = unescapeAttr(groups[1])
+            guard let r = mathImage(latex: tex, display: true,
+                                    fontSize: theme.fontSize, color: color),
+                  let data = pngData(r.image, scale: 2) else {
+                return "<code>\(HTMLRenderer.escape(tex))</code>"
+            }
+            let uri = "data:image/png;base64,\(data.base64EncodedString())"
+            return "<img class=\"math math-inline\" style=\"height:\(fmt(r.image.size.height))px; vertical-align:\(fmt(-r.descent))px\" src=\"\(uri)\" alt=\"\(HTMLRenderer.attr(tex))\">"
+        }
         return out
     }
 
@@ -100,7 +118,8 @@ public enum DocumentHTML {
         let mode: MTMathUILabelMode = display ? .display : .text
         let math = MTMathImage(latex: latex, fontSize: fontSize, textColor: color, labelMode: mode)
         let insetPad: CGFloat = 2
-        math.contentInsets = MTEdgeInsets(top: insetPad, left: 0, bottom: insetPad, right: 0)
+        math.contentInsets = MTEdgeInsets(top: insetPad, left: 0,
+                                          bottom: insetPad, right: insetPad)
         let (error, image) = math.asImage()
         guard error == nil, let image else { return nil }
 

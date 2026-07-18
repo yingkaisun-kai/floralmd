@@ -1,12 +1,24 @@
 FloralMD
 Copyright 2026 Yingkai Sun
 
-FloralMD is derived from Edmund (https://github.com/I7T5/Edmund), originally
-created by Yina Tang and distributed under the Apache License, Version 2.0.
+Portions of FloralMD are derived from Edmund
+(https://github.com/I7T5/Edmund), originally created by Yina Tang and
+distributed under the Apache License, Version 2.0.
+Portions copyright 2026 Yina Tang.
 
 FloralMD contains substantial modifications, including a new product identity,
 application icon, package and bundle identifiers, project infrastructure, and
 subsequent user-interface features. FloralMD is independently developed and is
 not endorsed by or affiliated with the Edmund project or its contributors.
 
+This product includes software from the Swift Markdown Project
+(https://github.com/swiftlang/swift-markdown).
+Copyright (c) 2021 Apple Inc. and the Swift project authors.
+
+Swift Markdown contains a derivation of cmark-gfm
+(https://github.com/github/cmark-gfm), which in turn is based on cmark
+(https://github.com/commonmark/cmark).
+
 The Apache License, Version 2.0 is included in the LICENSE file.
+Additional third-party license texts are distributed with their corresponding
+source packages and in the application bundle's LICENSES directory.

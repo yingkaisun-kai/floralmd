@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified from Edmund by Yingkai Sun for FloralMD.
 """Render one CHANGELOG.md version section as HTML for a Sparkle appcast.
 
 Usage: changelog-to-html.py <version>

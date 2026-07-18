@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 import UniformTypeIdentifiers
 import FloralMDCore
@@ -35,6 +36,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     private var scrollView: NSScrollView!
     private var containerView: NSView!
     private var readView: ReadModeWebView?
+    private var lastReadAnchorOffset: Int?
+    private var pendingReadEntryRestore: (line: Int, fraction: Double)?
     private var gitBaseline: GitFileBaseline?
     private var usesTranslucentPinnedWindowBackground = false
     private var allSpacesPinnedPanelController: AllSpacesPinnedPanelController?
@@ -1781,9 +1784,27 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     }
 
     private func setViewMode(_ mode: EditorTextView.ViewMode) {
+        // Capture before the mode setter recomposes far blocks back to lazy
+        // height estimates; afterward the geometry no longer matches the view
+        // the user was actually looking at.
+        if mode == .reading { captureReadEntryAnchor() }
         editor.viewMode = mode
         applyViewMode(mode)
         refreshViewModeButton()
+    }
+
+    private func captureReadEntryAnchor() {
+        pendingReadEntryRestore = nil
+        guard !scrollView.isHidden,
+              let offset = editor.topmostVisibleCharacterOffset() else { return }
+        let visibleLine = editor.line(forOffset: offset)
+        let spans = ReadModeAnchors.topLevelBlockSpans(for: editor.rawSource)
+        guard !spans.isEmpty else { return }
+        let span = spans.last(where: { $0.startLine <= visibleLine }) ?? spans[0]
+        let lineCount = Double(span.endLine - span.startLine + 1)
+        let fraction = min(1, Double(visibleLine - span.startLine) / max(1, lineCount))
+        pendingReadEntryRestore = (line: span.startLine, fraction: fraction)
+        lastReadAnchorOffset = offset
     }
 
     /// Swaps the on-screen view for the mode: Read mode shows the rendered-HTML
@@ -1791,6 +1812,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     private func applyViewMode(_ mode: EditorTextView.ViewMode) {
         guard let containerView else { return }
         if mode == .reading {
+            let pendingRestore = pendingReadEntryRestore
+            pendingReadEntryRestore = nil
             let read = readView ?? {
                 let v = ReadModeWebView()
                 v.usesTransparentBackground = usesTranslucentPinnedWindowBackground
@@ -1798,6 +1821,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
                                  width: scrollView.frame.width + minimapView.frame.width,
                                  height: scrollView.frame.height)
                 v.autoresizingMask = [.width, .height]
+                v.isHidden = true
                 // Below the floating status bar so counts stay visible.
                 containerView.addSubview(v, positioned: .below, relativeTo: statusBar)
                 // Route internal navigation through the editor's link resolver
@@ -1805,24 +1829,68 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
                 // NSDocumentController) instead of navigating the webview.
                 v.onOpenWikiLink = { [weak self] in self?.editor.followWikiLink($0) }
                 v.onOpenInternalLink = { [weak self] in self?.editor.followLinkDestination($0) }
+                // Keep Edit visible until the HTML and its restored viewport are
+                // ready, then exchange the two surfaces once.
+                v.onLoadFinished = { [weak self] in
+                    guard let self, self.editor.viewMode == .reading,
+                          let read = self.readView else { return }
+                    read.isHidden = false
+                    self.minimapView?.isHidden = true
+                    self.scrollView.isHidden = true
+                    self.editor.window?.makeFirstResponder(read)
+                }
                 readView = v
                 return v
             }()
+            if let pendingRestore {
+                read.setPendingScrollRestore(line: pendingRestore.line,
+                                             fraction: pendingRestore.fraction)
+            }
             read.render(markdown: editor.rawSource,
                         theme: editor.theme,
                         callouts: mergedCallouts,
                         baseURL: documentDirectory,
                         options: renderOptions)
-            read.isHidden = false
-            minimapView?.isHidden = true
-            scrollView.isHidden = true
-            editor.window?.makeFirstResponder(read)
         } else {
-            readView?.isHidden = true
-            scrollView.isHidden = false
-            minimapView?.isHidden = !AppSettings.showMinimap
-            editor.window?.makeFirstResponder(editor)
+            if let read = readView, !read.isHidden {
+                // Capture the Read position while it is still visible. The
+                // editor remains hidden until its TextKit 2 viewport has been
+                // positioned, so the asynchronous JS round-trip cannot expose
+                // the old location followed by a visible correction hop.
+                read.readScrollPosition { [weak self] position in
+                    guard let self, self.editor.viewMode != .reading else { return }
+                    var targetOffset: Int?
+                    if let position {
+                        let spans = ReadModeAnchors.topLevelBlockSpans(for: self.editor.rawSource)
+                        let span = spans.first(where: { $0.startLine == position.line })
+                            ?? spans.last(where: { $0.startLine <= position.line })
+                        if let span {
+                            let lineCount = Double(span.endLine - span.startLine + 1)
+                            let targetLine = min(
+                                span.endLine,
+                                span.startLine + Int((position.fraction * lineCount).rounded())
+                            )
+                            targetOffset = self.editor.offset(forLine: targetLine)
+                        }
+                    }
+                    if let offset = targetOffset ?? self.lastReadAnchorOffset {
+                        self.editor.scrollCharacterToTop(offset)
+                    }
+                    self.swapToEditor()
+                }
+            } else {
+                swapToEditor()
+            }
         }
+    }
+
+    private func swapToEditor() {
+        readView?.isHidden = true
+        scrollView.isHidden = false
+        minimapView?.isHidden = !AppSettings.showMinimap
+        editor.window?.makeFirstResponder(editor)
+        editor.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        editor.needsDisplay = true
     }
 
     /// Re-renders an open Read view from the editor's current source + theme.

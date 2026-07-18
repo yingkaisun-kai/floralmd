@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 import SwiftMath
 
@@ -43,13 +44,12 @@ extension EditorTextView {
         } else {
             let mode: MTMathUILabelMode = display ? .display : .text
             let math = MTMathImage(latex: latex, fontSize: fontSize, textColor: color, labelMode: mode)
-            // SwiftMath sizes the image to the exact typographic ascent+descent,
-            // which crops a glyph's ink overshoot below the baseline — the bottom
-            // of a lone `x`/`c` sits flush on the image edge and renders clipped.
-            // A small content inset gives the rasterizer room so the full glyph is
-            // drawn; it's folded into the descent below so alignment is unchanged.
+            // SwiftMath sizes to typographic metrics, but italic ink can lean
+            // beyond the right-side advance and be clipped (for example `$F$`).
+            // Keep the left edge tight and add trailing raster room alongside
+            // the existing vertical padding.
             let insetPad: CGFloat = 2
-            math.contentInsets = MTEdgeInsets(top: insetPad, left: 0, bottom: insetPad, right: 0)
+            math.contentInsets = MTEdgeInsets(top: insetPad, left: 0, bottom: insetPad, right: insetPad)
             let (error, image) = math.asImage()
             guard error == nil, let image else { return nil }
 

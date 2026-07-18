@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Testing
 import AppKit
 import SwiftMath
@@ -56,6 +57,23 @@ struct InlineMathRenderingTests {
         #expect(!isHidden(at: 1, in: styled))             // raw source shown
         let color = styled.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
         #expect(color == NSColor.systemRed)
+    }
+
+    @Test("Inline integral reserves ascent and descent separately")
+    @MainActor func inlineIntegralReservesVerticalSpace() {
+        let editor = makeEditor()
+        let styled = editor.styleBlock("value $\\int_0^1 x\\,dx$ here")
+        let overlay = styled.attribute(.fragmentOverlay, at: 6,
+                                       effectiveRange: nil) as? FragmentOverlay
+        #expect(overlay != nil)
+        guard let overlay else { return }
+        let descent = -overlay.bounds.minY
+        let ascent = overlay.bounds.height - descent
+        let style = styled.attribute(.paragraphStyle, at: 0,
+                                     effectiveRange: nil) as? NSParagraphStyle
+        #expect(style != nil)
+        #expect((style?.minimumLineHeight ?? 0) >= ascent - 0.5)
+        #expect((style?.paragraphSpacing ?? 0) >= descent - 0.5)
     }
 }
 
@@ -154,6 +172,32 @@ struct DisplayMathRenderingTests {
         #expect(abs(ps.minimumLineHeight - ascent) < 0.5)
         let basePad = editor.bodyFont.pointSize * 0.9
         #expect(abs(ps.paragraphSpacing - (basePad + descent)) < 0.5)
+    }
+}
+
+@Suite("Math — Display math in list items")
+struct ListDisplayMathRenderingTests {
+
+    @Test("List-owned display math keeps list indent and reserves block height")
+    @MainActor func inactiveListDisplayMath() {
+        let editor = makeEditor()
+        let styled = editor.styleBlock("1. $$x+y$$")
+        #expect(styled.attribute(.fragmentOverlay, at: 3,
+                                 effectiveRange: nil) is FragmentOverlay)
+        let style = styled.attribute(.paragraphStyle, at: 0,
+                                     effectiveRange: nil) as? NSParagraphStyle
+        #expect((style?.headIndent ?? 0) > 0)
+        #expect((style?.minimumLineHeight ?? 0) > 0)
+        #expect(style?.alignment != .center)
+    }
+
+    @Test("Display math following list prose stays inline")
+    @MainActor func proseBeforeDisplayMathStaysInline() {
+        let editor = makeEditor()
+        let styled = editor.styleBlock("- First $$x+y$$")
+        let style = styled.attribute(.paragraphStyle, at: 0,
+                                     effectiveRange: nil) as? NSParagraphStyle
+        #expect(style?.alignment != .center)
     }
 }
 

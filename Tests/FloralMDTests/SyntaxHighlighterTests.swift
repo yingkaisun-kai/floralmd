@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Testing
 import Foundation
 @testable import FloralMDCore
@@ -1143,6 +1144,16 @@ struct DisplayMathTests {
         #expect(spans[0].kind == .math(display: true))
         #expect(spans[0].fullRange == NSRange(location: 5, length: 5))
         #expect((text as NSString).substring(with: spans[0].contentRange) == "x")
+    }
+
+    @Test("$$…$$ inside inline code is literal")
+    func displayMathInsideInlineCode() {
+        #expect(mathSpans("code `$$x+y$$` here").isEmpty)
+    }
+
+    @Test("$$…$$ inside fenced code is literal")
+    func displayMathInsideFencedCode() {
+        #expect(mathSpans("```text\n$$x+y$$\n```").isEmpty)
     }
 
     @Test("Two $$…$$ runs on one line produce two display spans")

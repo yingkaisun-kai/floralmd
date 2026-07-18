@@ -1,3 +1,4 @@
+<!-- Modified from Edmund by Yingkai Sun for FloralMD. -->
 # FloralMD 架构概览
 
 本文档介绍 FloralMD 的主要技术结构、核心约束和常用代码入口。
@@ -97,6 +98,10 @@ Markdown 源码
 
 - `.blockDecoration` 绘制 Callout、引用竖线、表格边框、分隔线、代码背景和列表缩进引导线；
 - `.fragmentOverlay` 在字符位置绘制数学公式、图片、列表符号和复选框；
+- 行内公式 overlay 的 ascent 写入 `minimumLineHeight`，descent 写入段后间距；
+  不得把整张公式图片高度都塞进 `minimumLineHeight`，否则基线会被压到行框底部，
+  积分号或分式的下沉部分会与下一段重叠。列表项中的独占 `$$…$$` 保留列表段落
+  缩进，只在标记所在行预留块公式高度；`$$…$$` 与正文同处一行时仍按行内流布局。
 - `.tableRowPresentation` 在非激活表格中按共享列网格独立绘制每个单元格，使所有列都能在自己的矩形内换行。
 - 表格列宽与图片缩放宽度都在样式化时写入展示属性；窗口 resize 改变内容列宽后，
   `updateContentInset()` 必须重新样式化这些宽度敏感块。只修改
@@ -112,7 +117,24 @@ Markdown 源码
 
 阅读模式使用独立的 `WKWebView`，由 `DocumentHTML` 与 `HTMLRenderer` 将同一份 Markdown 解析结果转换为带主题的 HTML。PDF 导出与打印复用同一条 HTML 渲染路径。
 
-阅读环境默认禁用 JavaScript，并对原始 HTML、外部链接和远程图片执行限制。数学公式、图标和允许的本地资源会转换为内联资源。
+阅读环境默认禁用 JavaScript，并对原始 HTML、外部链接和远程图片执行限制。数学公式、图标和允许的本地资源会转换为内联资源。只有忽略空白后独占段落的
+`$$…$$` 才输出块公式；正文中的 `$$…$$` 使用 display 模式渲染但保持行内流，
+代码 span 或 fenced code 中的美元符号始终按字面量保留。
+
+Finder Quick Look 继续返回自包含的数据型 HTML，并在每次打开预览时从扩展进程的
+`effectiveAppearance` 解析浅色或深色调色板。Quick Look 的数据型 HTML 宿主不会
+可靠响应 `prefers-color-scheme`，且 reply 生成后不可变；因此系统外观切换后需要
+关闭并重新打开预览才会重新取值，不为实时切换引入带额外网络权限的 `WKWebView`。
+
+编辑与阅读模式按源码行保持视口：`HTMLRenderer` 给每个顶层块添加
+`floralmd-l<起始行>` 锚点，`ReadModeAnchors` 暴露同一组行范围；WebView 通过只
+插入数字的宿主静态 JavaScript 读取或设置“锚点行 + 块内比例”。这不放开页面脚本，
+`allowsContentJavaScript = false` 与 CSP 继续约束文档内容。编辑侧只使用 TextKit 2
+把 UTF-16 源码位置与行号互换。两个方向都先在隐藏表面完成定位，再一次性交换视图：
+Edit→Read 等 HTML 和滚动恢复完成，Read→Edit 等异步位置读取及 TextKit 2 滚动
+完成，因此不会先显示旧位置再跳动。进入 Read 的锚点必须在 `viewMode` setter
+重组离屏块之前取得；远距离返回 Edit 时还必须先同步样式化并布局目标以上的块，
+否则离屏高度估算在后台变成真实高度后会继续推动视口。
 
 ## 7. 主要代码入口
 
@@ -247,6 +269,16 @@ SwiftPM cache 使用 `spm-v3-macos26` 代际，不能复用旧 `macos-14` / Xcod
 产生的构建缓存。runner 和编译器版本不改变 `Package.swift` 声明的 macOS 14
 最低部署目标。
 
+SwiftMath 的原生 SwiftPM CLI 构建只生成从 `Bundle.main.bundleURL`（应用包根目录）
+查找资源的访问器，而标准 macOS 应用把 `SwiftMath_SwiftMath.bundle` 封装在
+`Contents/Resources`。Production 因此通过 `swift build --build-system xcode`
+构建；Xcode 的 SwiftPM 集成会生成应用感知的候选路径，优先检查
+`Bundle.main.resourceURL`，再回退到 framework 和命令行位置。v2026.7.3 与
+v2026.7.4 曾尝试在构建后修改 SwiftPM 的派生源码，但后续构建重新生成了访问器，
+最终二进制仍只包含 `bundleURL`，导致首次渲染公式时触发 `NSBundle.module` 的
+断言退出。打包门禁会检查最终 Mach-O 确实包含 `resourceURL` 选择器，并确认资源包
+实际位于 `Contents/Resources`；不能只检查派生源码或目录中是否存在 `.bundle`。
+
 标准“检查更新…”菜单、`SPUStandardUpdaterController`、feed 和公钥都只属于
 Production；Debug 不导入、链接或嵌入 Sparkle，也不显示该菜单。
 `scripts/build-app.sh` 同时检查两种产物：Production 必须含正确 feed、非空公钥、
@@ -265,6 +297,16 @@ Release 标题和 DMG 名称分别使用 `v2026.7.0`、`FloralMD 2026.7.0` 和
 
 ## 11. 许可与反馈
 
-FloralMD 使用 Apache License 2.0，来源与上游署名见根目录的 `NOTICE` 和 `README.md`。
+FloralMD 使用 Apache License 2.0。根目录 `LICENSE` 保持许可证标准文本；项目、
+Edmund 与 Swift Markdown 的署名及来源说明由 `NOTICE` 承担。能够从 Edmund
+对应文件确认继承且内容发生变化的文本文件，必须携带一行
+`Modified from Edmund by Yingkai Sun for FloralMD.`；纯重命名且内容相同的文件与
+首次由 FloralMD 创建的文件不需要该声明。具体来源映射和发布前完整性检查属于内部
+维护资料，不进入公开源码快照或发行包。
+
+`scripts/build-app.sh` 把根 `LICENSE`、`NOTICE`、Lucide 许可及当前 SwiftPM
+解析版本对应的 Swift Markdown、Swift CMark、SwiftMath 许可证复制到 app bundle；
+Production 还复制 Sparkle 许可证。构建后的 sealed bundle 会逐项检查这些资源，
+因此 DMG 不再依赖仓库网页或 Git 历史来提供第三方许可文本。
 
 如果遇到问题，欢迎附上 macOS 版本、FloralMD 版本、复现步骤和必要截图，方便定位原因。

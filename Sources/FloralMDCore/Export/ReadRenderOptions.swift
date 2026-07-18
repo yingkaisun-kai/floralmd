@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Foundation
 
 /// User-configurable options for the Read-mode / export HTML rendering. Kept in

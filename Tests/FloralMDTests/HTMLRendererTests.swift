@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Testing
 import Foundation
 @testable import FloralMDCore
@@ -5,10 +6,18 @@ import Foundation
 // String-assertion tests for the HTML renderer: parse markdown → render → assert
 // HTML. Pure logic, no AppKit/window needed.
 
+private func htmlWithoutSourceAnchors(_ markdown: String) -> String {
+    HTMLRenderer.render(markdown: markdown).replacingOccurrences(
+        of: #" id="floralmd-l\d+""#,
+        with: "",
+        options: .regularExpression
+    )
+}
+
 @Suite("HTMLRenderer — core GFM")
 struct HTMLRendererCoreTests {
 
-    private func html(_ md: String) -> String { HTMLRenderer.render(markdown: md) }
+    private func html(_ md: String) -> String { htmlWithoutSourceAnchors(md) }
 
     @Test("Headings render h1…h6")
     func headings() {
@@ -176,7 +185,7 @@ struct HTMLRendererCoreTests {
 @Suite("HTMLRenderer — escaping & security")
 struct HTMLRendererEscapingTests {
 
-    private func html(_ md: String) -> String { HTMLRenderer.render(markdown: md) }
+    private func html(_ md: String) -> String { htmlWithoutSourceAnchors(md) }
 
     @Test("Inline <script> is tagfiltered (no script injection)")
     func escapesText() {
@@ -197,7 +206,7 @@ struct HTMLRendererEscapingTests {
 @Suite("HTMLRenderer — GFM raw HTML, tagfilter & hardening")
 struct HTMLRendererRawHTMLTests {
 
-    private func html(_ md: String) -> String { HTMLRenderer.render(markdown: md) }
+    private func html(_ md: String) -> String { htmlWithoutSourceAnchors(md) }
 
     // GFM §6.11 spec example: only the leading `<` of a disallowed tag becomes
     // `&lt;` (the `>` stays literal); everything else passes through raw.
@@ -262,7 +271,7 @@ struct HTMLRendererRawHTMLTests {
 @Suite("HTMLRenderer — non-GFM inline")
 struct HTMLRendererInlineTests {
 
-    private func html(_ md: String) -> String { HTMLRenderer.render(markdown: md) }
+    private func html(_ md: String) -> String { htmlWithoutSourceAnchors(md) }
 
     @Test("==highlight== → <mark>")
     func highlight() {
@@ -280,6 +289,31 @@ struct HTMLRendererInlineTests {
         let out = html("$$\n\\int_0^1 x\\,dx\n$$")
         #expect(out.contains("<div class=\"math-display\" data-tex=\""))
         #expect(out.contains("\\int_0^1"))
+    }
+
+    @Test("$$…$$ inside inline code remains literal")
+    func displayMathInsideInlineCode() {
+        let out = html("Inline `$$a+b$$` remains code.")
+        #expect(!out.contains("math-display"))
+        #expect(out.contains("<code>$$a+b$$</code>"))
+        #expect(out.contains("remains code"))
+    }
+
+    @Test("$$…$$ amid prose renders in display mode without replacing prose")
+    func displayMathAmidProse() {
+        let out = html("before $$\\int_0^1 x$$ after")
+        #expect(!out.contains("class=\"math-display\""))
+        #expect(out.contains("math-display-inline"))
+        #expect(out.contains("before"))
+        #expect(out.contains("after"))
+    }
+
+    @Test("$$…$$ alongside list prose remains inline")
+    func displayMathAlongsideListProse() {
+        let out = html("- First $$\\int_0^1 x$$")
+        #expect(out.contains("<li>"))
+        #expect(out.contains("math-display-inline"))
+        #expect(!out.contains("class=\"math-display\""))
     }
 
     // Regression: LaTeX environments carry `\\` row separators. swift-markdown's
@@ -383,7 +417,7 @@ struct HTMLRendererInlineTests {
 @Suite("HTMLRenderer — footnotes")
 struct HTMLRendererFootnoteTests {
 
-    private func html(_ md: String) -> String { HTMLRenderer.render(markdown: md) }
+    private func html(_ md: String) -> String { htmlWithoutSourceAnchors(md) }
 
     @Test("Reference becomes a superscript link; raw [^id] doesn't leak into the page")
     func reference() {
@@ -429,7 +463,7 @@ struct HTMLRendererFootnoteTests {
 @Suite("HTMLRenderer — callouts")
 struct HTMLRendererCalloutTests {
 
-    private func html(_ md: String) -> String { HTMLRenderer.render(markdown: md) }
+    private func html(_ md: String) -> String { htmlWithoutSourceAnchors(md) }
 
     @Test("Known callout type → callout div with title and body")
     func basicCallout() {

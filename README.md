@@ -1,3 +1,4 @@
+<!-- Modified from Edmund by Yingkai Sun for FloralMD. -->
 # FloralMD
 
 ![macOS Version Compatibility](https://img.shields.io/badge/platform-macOS%2014.0%2B-0064e1?style=flat-square&color=0064e1)
@@ -209,4 +210,7 @@ GitHub Release DMG.
 
 ## License
 
-[Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for third-party notices.
+[Apache License 2.0](LICENSE). Upstream attribution and modification context are
+recorded in [NOTICE](NOTICE). Vendored asset licenses are kept in
+[LICENSES](LICENSES/); applicable SwiftPM dependency license texts are copied
+from the resolved packages into the app bundle at build time.

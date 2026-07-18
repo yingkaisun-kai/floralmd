@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 // The General settings pane (startup, document saving, conflict resolution).
 
 import SwiftUI

@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 // The Appearance settings pane: appearance mode, fonts, and line height.
 // The app accent comes from the AccentColor asset (see Resources/Assets.xcassets),
 // so there is no in-app accent picker — native controls follow the asset / system.

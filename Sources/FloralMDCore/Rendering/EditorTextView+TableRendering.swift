@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 
 /// Table styling: the largest single case of the `styleBlock` switch. When the

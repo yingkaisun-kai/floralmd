@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 
 // MARK: - HTMLTheme
@@ -137,7 +138,7 @@ enum HTMLTheme {
        room, so the cadence feels like a clean, readable version of Edit mode
        rather than a collapsed publication layout. */
     p { margin: 0 0 1em; }
-    h1, h2, h3, h4, h5, h6 { line-height: 1.25; font-weight: 600; margin: 1.4em 0 0.5em; }
+    h1, h2, h3, h4, h5, h6 { line-height: 1.25; font-weight: 600; margin: 1.7em 0 0.7em; }
     h1 { font-size: 1.9em; } h2 { font-size: 1.55em; } h3 { font-size: 1.3em; }
     h4 { font-size: 1.1em; } h5 { font-size: 1em; } h6 { font-size: 0.9em; color: var(--faint); }
     :is(h1, h2, h3, h4, h5, h6):first-child { margin-top: 0; }
@@ -186,10 +187,10 @@ enum HTMLTheme {
        items stay at 0 margin — otherwise each level compounds to large gaps. */
     ul, ol { margin: 0; padding-left: 1.25em; }
     .page > ul, .page > ol,
-    .callout-body > ul, .callout-body > ol { margin: 1em 0; padding-left: 2.25em; }
+    .callout-body > ul, .callout-body > ol { margin: 1.3em 0; padding-left: 2.25em; }
     li > ul, li > ol { margin: 0; }
     ul { list-style-type: disc; }
-    li { margin: 0.2em 0; }
+    li { margin: 0.35em 0; }
     li::marker { color: var(--marker); font-size: 0.85em; }
     li > p { margin: 0; }
     /* Task items: float the checkbox into the marker slot so the label and

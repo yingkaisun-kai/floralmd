@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 
 extension NSAttributedString.Key {
@@ -271,7 +272,8 @@ extension EditorTextView {
                     applyOverlay(overlay,
                                  anchor: NSRange(location: span.fullRange.location, length: 1),
                                  in: result)
-                    reserveLineHeight(overlay.bounds.height,
+                    reserveLineHeight(ascent: overlay.bounds.height + overlay.bounds.minY,
+                                      descent: -overlay.bounds.minY,
                                       forOverlayAt: span.fullRange.location, in: result)
                 } else if (markdown as NSString).character(at: span.fullRange.location) == 0x3C {
                     // Active (or pending) `<img …>`: show the raw tag as colored
@@ -438,26 +440,33 @@ extension EditorTextView {
                         applyOverlay(overlay,
                                      anchor: NSRange(location: span.fullRange.location, length: 1),
                                      in: result)
-                        // A `$$…$$` run gets block layout (centered on its own
-                        // line) only when it owns the whole block. A run sharing
-                        // its line with prose flows inline like `$…$` math.
-                        let displayOwnsBlock: Bool = {
-                            guard display else { return false }
-                            let blockNS = markdown as NSString
-                            let full = span.fullRange
-                            let nonWS = CharacterSet.whitespacesAndNewlines.inverted
-                            let before = NSRange(location: 0, length: full.location)
-                            let after = NSRange(location: full.upperBound,
-                                                length: blockNS.length - full.upperBound)
-                            return blockNS.rangeOfCharacter(from: nonWS, options: [], range: before).location == NSNotFound
-                                && blockNS.rangeOfCharacter(from: nonWS, options: [], range: after).location == NSNotFound
-                        }()
+                        // Display math owns a block when it is the only content,
+                        // or when only a list marker precedes it. Prose alongside
+                        // `$$…$$` keeps the equation in the line flow.
+                        let blockNS = markdown as NSString
+                        let full = span.fullRange
+                        let nonWS = CharacterSet.whitespacesAndNewlines.inverted
+                        let afterRange = NSRange(location: full.upperBound,
+                                                 length: blockNS.length - full.upperBound)
+                        let afterClear = blockNS.rangeOfCharacter(from: nonWS,
+                                                                  options: [],
+                                                                  range: afterRange).location == NSNotFound
+                        let beforeString = blockNS.substring(to: full.location)
+                        let beforeClear = beforeString.allSatisfy {
+                            $0 == " " || $0 == "\t" || $0 == "\n"
+                        }
+                        let listMarkerBefore = !beforeClear
+                            && BlockParser.isListMarkerOnly(beforeString)
+                        let displayOwnsBlock = display && afterClear
+                            && (beforeClear || listMarkerBefore)
                         if !displayOwnsBlock {
                             // Inline math — and a display run sharing its line
                             // with prose — flows within the text line; reserve
                             // the line height so a tall equation (e.g. scaled to
-                            // a heading's font) doesn't overlap the line below.
-                            reserveLineHeight(overlay.bounds.height,
+                            // a heading's font, or with a large descent) doesn't
+                            // overlap either adjacent line.
+                            reserveLineHeight(ascent: overlay.bounds.height + overlay.bounds.minY,
+                                              descent: -overlay.bounds.minY,
                                               forOverlayAt: span.fullRange.location,
                                               in: result)
                         }
@@ -466,21 +475,39 @@ extension EditorTextView {
                         // reserved on the (first) line that carries it.
                         if displayOwnsBlock {
                             let fullStr = result.string as NSString
-                            result.addAttribute(.paragraphStyle,
-                                                value: displayMathParagraphStyle(padded: false),
-                                                range: span.fullRange)
                             let nl = fullStr.range(of: "\n", options: [], range: span.fullRange)
-                            let firstLine = nl.location == NSNotFound
-                                ? span.fullRange
-                                : NSRange(location: span.fullRange.location,
-                                          length: nl.location - span.fullRange.location + 1)
                             let imageDescent = -overlay.bounds.minY
                             let imageAscent = overlay.bounds.height - imageDescent
-                            result.addAttribute(.paragraphStyle,
-                                                value: displayMathParagraphStyle(padded: true,
-                                                                                 imageAscent: imageAscent,
-                                                                                 imageDescent: imageDescent),
-                                                range: firstLine)
+                            if listMarkerBefore {
+                                // Keep the list indent and reserve the rendered
+                                // equation on the marker's line.
+                                let firstLineEnd = nl.location == NSNotFound
+                                    ? span.fullRange.upperBound : nl.location + 1
+                                let firstLine = NSRange(location: 0, length: firstLineEnd)
+                                let base = (result.attribute(.paragraphStyle, at: 0,
+                                                             effectiveRange: nil)
+                                    as? NSParagraphStyle) ?? bodyParagraphStyle
+                                let ps = base.mutableCopy() as! NSMutableParagraphStyle
+                                let padding = bodyFont.pointSize * 0.9
+                                ps.paragraphSpacingBefore = padding
+                                ps.paragraphSpacing = padding + imageDescent
+                                ps.minimumLineHeight = imageAscent
+                                result.addAttribute(.paragraphStyle, value: ps, range: firstLine)
+                            } else {
+                                result.addAttribute(.paragraphStyle,
+                                                    value: displayMathParagraphStyle(padded: false),
+                                                    range: span.fullRange)
+                                let firstLine = nl.location == NSNotFound
+                                    ? span.fullRange
+                                    : NSRange(location: span.fullRange.location,
+                                              length: nl.location - span.fullRange.location + 1)
+                                result.addAttribute(.paragraphStyle,
+                                                    value: displayMathParagraphStyle(
+                                                        padded: true,
+                                                        imageAscent: imageAscent,
+                                                        imageDescent: imageDescent),
+                                                    range: firstLine)
+                            }
                         }
                     } else {
                         // Invalid LaTeX: surface the raw source in monospace, tinted.

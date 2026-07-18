@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Foundation
 import Markdown
 
@@ -97,22 +98,38 @@ struct HTMLRenderer: MarkupVisitor {
     /// back to its last non-blank source line; the blank run between blocks A and
     /// B is then `B.firstLine - clamp(A.end) - 1`.
     mutating func visitDocument(_ document: Document) -> String {
-        guard options.preserveBlankLines else { return renderChildren(of: document) }
         var out = ""
         var prevEndLine: Int?
         for child in document.children {
-            if let prevEndLine, let range = child.range {
+            if options.preserveBlankLines, let prevEndLine, let range = child.range {
                 let blanks = range.lowerBound.line - prevEndLine - 1
                 if blanks > 1 {
                     out += String(repeating: "<div class=\"blank-line\"></div>", count: blanks - 1)
                 }
             }
-            out += visit(child)
+            var html = visit(child)
             if let range = child.range {
+                html = addingAnchorID(html, line: range.lowerBound.line)
+            }
+            out += html
+            if options.preserveBlankLines, let range = child.range {
                 prevEndLine = lastContentLine(atOrBefore: range.upperBound.line)
             }
         }
         return out
+    }
+
+    /// Adds a source-line anchor to the first opening tag of a top-level block.
+    /// Read mode uses these anchors to map its rendered viewport back to the
+    /// character-identical raw-source buffer without inserting display text.
+    private func addingAnchorID(_ html: String, line: Int) -> String {
+        guard html.hasPrefix("<"), !html.hasPrefix("</"), !html.hasPrefix("<!") else { return html }
+        var index = html.index(after: html.startIndex)
+        while index < html.endIndex, html[index].isLetter || html[index].isNumber {
+            index = html.index(after: index)
+        }
+        guard index > html.index(after: html.startIndex) else { return html }
+        return String(html[..<index]) + " id=\"floralmd-l\(line)\"" + String(html[index...])
     }
 
     /// The last source line at or before `line` (1-indexed) that has non-blank
@@ -151,8 +168,16 @@ struct HTMLRenderer: MarkupVisitor {
         var dm: [SyntaxHighlighter.Span] = []
         SyntaxHighlighter.parseDisplayMath(raw, into: &dm)
         if let span = dm.first(where: { if case .math(true) = $0.kind { return true }; return false }) {
-            let tex = (raw as NSString).substring(with: span.contentRange)
-            return "<div class=\"math-display\" data-tex=\"\(Self.attr(tex))\"></div>"
+            let ns = raw as NSString
+            let nonWhitespace = CharacterSet.whitespacesAndNewlines.inverted
+            let first = ns.rangeOfCharacter(from: nonWhitespace).location
+            let last = ns.rangeOfCharacter(from: nonWhitespace, options: .backwards).location
+            if first != NSNotFound,
+               span.fullRange.location == first,
+               span.fullRange.upperBound == last + 1 {
+                let tex = ns.substring(with: span.contentRange)
+                return "<div class=\"math-display\" data-tex=\"\(Self.attr(tex))\"></div>"
+            }
         }
 
         // A `[^id]: body` paragraph (the marker starts the paragraph's first
@@ -596,6 +621,7 @@ struct HTMLRenderer: MarkupVisitor {
         guard !s.isEmpty else { return "" }
         var spans: [SyntaxHighlighter.Span] = []
         SyntaxHighlighter.parseHighlight(s, into: &spans)
+        SyntaxHighlighter.parseDisplayMath(s, into: &spans)
         SyntaxHighlighter.parseMath(s, into: &spans)        // inline $…$ only
         SyntaxHighlighter.parseWikiLinks(s, into: &spans)
         SyntaxHighlighter.parseComments(s, into: &spans)
@@ -611,7 +637,7 @@ struct HTMLRenderer: MarkupVisitor {
         // Keep only the kinds we emit, ordered, non-overlapping (earliest wins).
         let relevant = spans.filter {
             switch $0.kind {
-            case .highlight, .math(false), .wikilink, .comment, .footnoteReference,
+            case .highlight, .math, .wikilink, .comment, .footnoteReference,
                  .link: return true
             default: return false
             }
@@ -624,17 +650,27 @@ struct HTMLRenderer: MarkupVisitor {
         // else fall back to the unescaped tex — no worse than before.
         var rawTexByLoc: [Int: String] = [:]
         if let rawSource {
-            var rawSpans: [SyntaxHighlighter.Span] = []
-            SyntaxHighlighter.parseMath(rawSource, into: &rawSpans)
             let rns = rawSource as NSString
-            let rawTex = rawSpans
-                .filter { if case .math(false) = $0.kind { return true }; return false }
-                .sorted { $0.fullRange.location < $1.fullRange.location }
-                .map { rns.substring(with: $0.contentRange) }
-            let mathSpans = relevant.filter { if case .math(false) = $0.kind { return true }; return false }
-            if mathSpans.count == rawTex.count {
-                for (i, sp) in mathSpans.enumerated() { rawTexByLoc[sp.fullRange.location] = rawTex[i] }
+            func recover(display: Bool) {
+                var rawSpans: [SyntaxHighlighter.Span] = []
+                if display { SyntaxHighlighter.parseDisplayMath(rawSource, into: &rawSpans) }
+                else { SyntaxHighlighter.parseMath(rawSource, into: &rawSpans) }
+                let rawTex = rawSpans
+                    .filter { if case .math(display) = $0.kind { return true }; return false }
+                    .sorted { $0.fullRange.location < $1.fullRange.location }
+                    .map { rns.substring(with: $0.contentRange) }
+                let emitted = relevant.filter {
+                    if case .math(display) = $0.kind { return true }
+                    return false
+                }
+                if emitted.count == rawTex.count {
+                    for (index, span) in emitted.enumerated() {
+                        rawTexByLoc[span.fullRange.location] = rawTex[index]
+                    }
+                }
             }
+            recover(display: false)
+            recover(display: true)
         }
 
         let ns = s as NSString
@@ -649,9 +685,10 @@ struct HTMLRenderer: MarkupVisitor {
             switch span.kind {
             case .highlight:
                 out += "<mark>\(escape(ns.substring(with: span.contentRange)))</mark>"
-            case .math(false):
+            case .math(let display):
                 let tex = rawTexByLoc[r.location] ?? ns.substring(with: span.contentRange)
-                out += "<span class=\"math-inline\" data-tex=\"\(attr(tex))\"></span>"
+                let cssClass = display ? "math-display-inline" : "math-inline"
+                out += "<span class=\"\(cssClass)\" data-tex=\"\(attr(tex))\"></span>"
             case .wikilink(let target):
                 // Emit a link in a private scheme so the read view's nav policy
                 // can intercept it and route through the app's document graph
@@ -764,5 +801,17 @@ struct HTMLRenderer: MarkupVisitor {
         var markerEnd = text.index(after: afterBracket)
         if markerEnd < text.endIndex, text[markerEnd] == " " { markerEnd = text.index(after: markerEnd) }
         return (String(id), text.distance(from: text.startIndex, to: markerEnd))
+    }
+}
+
+/// Source-line spans for the same top-level blocks that receive Read-mode
+/// anchors. Kept public so the app target can map TextKit 2 positions to HTML.
+public enum ReadModeAnchors {
+    public static func topLevelBlockSpans(for markdown: String) -> [(startLine: Int, endLine: Int)] {
+        let document = Document(parsing: markdown, options: [.disableSmartOpts])
+        return document.children.compactMap { child in
+            guard let range = child.range else { return nil }
+            return (startLine: range.lowerBound.line, endLine: range.upperBound.line)
+        }
     }
 }

@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Testing
 import AppKit
 @testable import FloralMDCore
@@ -16,7 +17,7 @@ struct DocumentHTMLTests {
         let out = doc("# Hi")
         #expect(out.hasPrefix("<!DOCTYPE html>"))
         #expect(out.contains("<style>"))
-        #expect(out.contains("<div class=\"page\"><h1>Hi</h1></div>"))
+        #expect(out.contains("<div class=\"page\"><h1 id=\"floralmd-l1\">Hi</h1></div>"))
     }
 
     @Test("Can leave the Read page background transparent without changing the default")
@@ -64,14 +65,25 @@ struct DocumentHTMLTests {
     @Test("Display math placeholder becomes a centered image")
     func displayMath() {
         let out = doc("$$\nx^2\n$$")
-        #expect(out.contains("<div class=\"math-display\"><img class=\"math\""))
+        #expect(out.contains("class=\"math-display\"><img class=\"math\""))
+        #expect(out.contains("id=\"floralmd-l1\""))
         #expect(out.contains("src=\"data:image/png;base64,"))
+    }
+
+    @Test("Display-mode math amid prose becomes a baseline-aligned image")
+    func displayMathAmidProse() {
+        let out = doc("before $$\\int_0^1 x$$ after")
+        #expect(!out.contains("data-tex"))
+        #expect(out.contains("<img class=\"math math-inline\""))
+        #expect(out.contains("vertical-align:"))
+        #expect(out.contains("before"))
+        #expect(out.contains("after"))
     }
 
     @Test("Math can remain readable without loading SwiftMath resources")
     func mathSourceMode() {
         let out = DocumentHTML.full(
-            markdown: "inline $x^2$\n\n$$\ny = mx + b\n$$",
+            markdown: "inline $x^2$ and $$z^2$$\n\n$$\ny = mx + b\n$$",
             theme: .default,
             callouts: Callout.defaultStyles,
             dark: false,
@@ -80,7 +92,8 @@ struct DocumentHTMLTests {
         #expect(!out.contains("data-tex"))
         #expect(!out.contains("data:image/png"))
         #expect(out.contains("<code>x^2</code>"))
-        #expect(out.contains("<div class=\"math-display\"><code>"))
+        #expect(out.contains("<code>z^2</code>"))
+        #expect(out.contains("class=\"math-display\"><code>"))
         #expect(out.contains("y = mx + b"))
     }
 
@@ -96,7 +109,7 @@ struct DocumentHTMLTests {
     @Test("Display environment renders to an image, not the source fallback")
     func displayEnvironmentRenders() {
         let out = doc("$$\n\\begin{aligned} \\pi &= 3 \\\\ e &= 2 \\end{aligned}\n$$")
-        #expect(out.contains("<div class=\"math-display\"><img class=\"math\""))
+        #expect(out.contains("class=\"math-display\"><img class=\"math\""))
         #expect(!out.contains("<code>"))
     }
 

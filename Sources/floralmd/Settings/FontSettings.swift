@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 // FontSettings — owns the editor fonts, line height, and accent hex, bridges the
 // AppKit font panel, and applies changes to every open document.
 

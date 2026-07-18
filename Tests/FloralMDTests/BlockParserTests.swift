@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Testing
 import Foundation
 @testable import FloralMDCore
@@ -358,6 +359,24 @@ struct BlockParserTests {
         let blocks = BlockParser.parse(text)
         #expect(blocks.count == 1)
         #expect(blocks[0].content == "$$ x +\ny $$")
+    }
+
+    @Test("Multi-line display math after a numbered-list marker stays one block")
+    func numberedListDisplayMathMerge() {
+        let text = "1. $$\\begin{aligned}\nu&=1 \\\\ v&=2\n\\end{aligned}$$\n2. next"
+        let blocks = BlockParser.parse(text)
+        #expect(blocks.count == 2)
+        #expect(blocks[0].content == "1. $$\\begin{aligned}\nu&=1 \\\\ v&=2\n\\end{aligned}$$")
+        #expect(blocks[1].content == "2. next")
+    }
+
+    @Test("Multi-line display math after a bullet marker stays one block")
+    func bulletListDisplayMathMerge() {
+        let text = "- $$\na=b\n$$\n- next"
+        let blocks = BlockParser.parse(text)
+        #expect(blocks.count == 2)
+        #expect(blocks[0].content == "- $$\na=b\n$$")
+        #expect(blocks[1].content == "- next")
     }
 
     @Test("Code fence range covers full text")

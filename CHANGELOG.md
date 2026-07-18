@@ -1,3 +1,4 @@
+<!-- Modified from Edmund by Yingkai Sun for FloralMD. -->
 # FloralMD Changelog
 
 All notable changes will be documented here.
@@ -11,6 +12,32 @@ complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
 ## [Unreleased]
+
+## [2026.7.5] — 2026-07-18
+
+### 中文
+
+#### 变更
+- 扩大阅读模式中标题与列表项的垂直间距，让长文档的层级和段落节奏更清晰。
+
+#### 修复
+- 修复部分正式版在首次显示公式时可能意外退出的问题。
+- 修复斜体公式字形右缘被裁切、较高的行内公式与下一段重叠，以及列表项中的块公式无法正确缩进和预留高度的问题。
+- 修复代码中的 `$$…$$` 被误渲染成公式，以及阅读模式中夹在正文里的 `$$…$$` 会替换整段内容的问题。
+- 修复在编辑与阅读模式之间切换时丢失阅读位置，或短暂显示旧滚动位置后再跳动的问题。
+- 修复 Finder Quick Look 预览未按打开时的系统浅色或深色外观显示的问题。
+
+### English
+
+#### Changed
+- Increased heading and list-item spacing in Read mode for clearer hierarchy and document rhythm.
+
+#### Fixed
+- Fixed some production builds quitting when displaying math for the first time.
+- Fixed clipped italic math glyphs, tall inline equations overlapping the next paragraph, and list-item display math losing its indent or vertical space.
+- Fixed `$$…$$` inside code rendering as math and embedded display math replacing the surrounding prose in Read mode.
+- Fixed Edit/Read mode switches losing the reading position or briefly showing a stale scroll position before jumping.
+- Fixed Finder Quick Look previews not matching the system light or dark appearance when opened.
 
 ## [2026.7.4] — 2026-07-17
 

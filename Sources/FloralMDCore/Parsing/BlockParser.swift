@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Foundation
 import Markdown
 
@@ -300,6 +301,21 @@ public enum BlockParser {
             return (merged.joined(separator: "\n"), .mathDisplay, j)
         }
 
+        // A list item can open display math after its marker (`1. $$…`). Merge
+        // through the closing delimiter so the renderer receives one block and
+        // can form a single display-math span.
+        if isListLine(first),
+           displayMathClosedOnSameLine(contentAfterListMarker(first)) == false {
+            var merged = [first]
+            var j = i + 1
+            while let line = buf.line(at: j) {
+                merged.append(line)
+                j += 1
+                if line.contains("$$") { break }
+            }
+            return (merged.joined(separator: "\n"), .listItem, j)
+        }
+
         // Merge block-quote lines into one block (the editor's styling /
         // activation unit per quote).
         if isBlockquoteLine(first) {
@@ -560,6 +576,28 @@ public enum BlockParser {
         guard !digits.isEmpty else { return false }
         let rest = trimmed.dropFirst(digits.count)
         return rest.hasPrefix(". ") || rest.hasPrefix(") ")
+    }
+
+    /// The content after a bullet or ordered-list marker and its following
+    /// space. Non-list input is returned unchanged.
+    static func contentAfterListMarker(_ line: String) -> String {
+        let trimmed = line.drop(while: { $0 == " " })
+        if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") {
+            return String(trimmed.dropFirst(2))
+        }
+        let digits = trimmed.prefix(while: { $0.isNumber })
+        guard !digits.isEmpty else { return line }
+        let rest = trimmed.dropFirst(digits.count)
+        if rest.hasPrefix(". ") || rest.hasPrefix(") ") {
+            return String(rest.dropFirst(2))
+        }
+        return line
+    }
+
+    /// True when a list marker is the only non-whitespace content.
+    static func isListMarkerOnly(_ string: String) -> Bool {
+        isListLine(string)
+            && contentAfterListMarker(string).allSatisfy { $0 == " " || $0 == "\t" }
     }
 
     /// Visual source column at which a list item's content begins. This is
