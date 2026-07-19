@@ -282,6 +282,20 @@ class QuickLookBundleConfigurationTests(unittest.TestCase):
                 info = plistlib.load(file)
             self.assertEqual(info.get("CFBundleShortVersionString"), "0.0.0")
             self.assertEqual(info.get("CFBundleVersion"), "0")
+            markdown = info["UTImportedTypeDeclarations"][0]
+            self.assertEqual(
+                markdown["UTTypeIdentifier"], "net.daringfireball.markdown"
+            )
+            self.assertEqual(
+                markdown["UTTypeTagSpecification"]["public.filename-extension"][0],
+                "md",
+            )
+            self.assertEqual(
+                info["NSExtension"]["NSExtensionAttributes"][
+                    "QLSupportedContentTypes"
+                ],
+                ["net.daringfireball.markdown"],
+            )
 
     def test_quick_look_variants_declare_and_embed_the_app_icon(self) -> None:
         for relative_path in (
