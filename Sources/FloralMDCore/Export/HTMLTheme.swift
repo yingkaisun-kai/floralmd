@@ -230,13 +230,13 @@ enum HTMLTheme {
        number marker to the right — so sibling markers stop lining up. */
     li.task::after { content: ""; display: block; clear: both; }
     .blank-line { height: calc(var(--body-size) * var(--line-height)); }
-    /* Tables keep their natural (content-driven) width and scroll horizontally
-       inside .table-wrap instead of squeezing columns or forcing cell text to
-       wrap — same idiom as `pre`'s overflow-x below. */
+    /* Tables stay visually substantial without forcing every short table to
+       span the full reading column. Very wide content wraps where possible;
+       the wrapper remains a fallback for genuinely many-column tables. */
     .table-wrap { overflow-x: auto; margin: 1em 0; }
-    table { border-collapse: collapse; }
-    th, td { border: 1px solid var(--rule); padding: 6px 10px; }
-    thead th { background: var(--code-bg); }
+    table { border-collapse: collapse; min-width: 66.667%; max-width: 100%; }
+    th, td { padding: 6px 10px; overflow-wrap: anywhere; }
+    thead tr, tbody tr:not(:last-child) { border-bottom: 1px solid var(--rule); }
     img { max-width: 100%; }
     img.math { vertical-align: middle; }
     .math-display { text-align: center; margin: 1em 0; }

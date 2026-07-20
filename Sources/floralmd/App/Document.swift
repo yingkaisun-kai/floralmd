@@ -109,12 +109,21 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     override func updateChangeCount(withToken changeCountToken: Any,
                                     for saveOperation: NSDocument.SaveOperationType) {
         super.updateChangeCount(withToken: changeCountToken, for: saveOperation)
+        editor?.breakUndoCoalescingAfterSave()
         reconcileDirtyStateWithDisk(reason: "save-token")
     }
 
     override func canClose(withDelegate delegate: Any,
                            shouldClose shouldCloseSelector: Selector?,
                            contextInfo: UnsafeMutableRawPointer?) {
+        editor?.commitMarkedTextForDocumentReview()
+        reconcileUntitledContentState()
+        if isDiscardableBlankUntitled,
+           finishCanClose(withDelegate: delegate,
+                          shouldClose: shouldCloseSelector,
+                          contextInfo: contextInfo) {
+            return
+        }
         reconcileDirtyStateWithDisk(reason: "close")
         if DocumentSavePolicy.shouldBypassCloseReview(
             automaticSavingEnabled: AppSettings.autoSaveWithVersions,
@@ -191,6 +200,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     }
 
     func saveBeforeAutomaticTermination(completion: @escaping (Error?) -> Void) {
+        prepareForUnsavedDocumentReview()
         reconcileDirtyStateWithDisk(reason: "termination-review")
         guard let url = fileURL,
               isDocumentEdited || hasUnautosavedChanges else {
@@ -1257,7 +1267,45 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         updateGitChangeMarkers()
         minimapView?.refresh()
         resolvePendingExternalChange()
+        reconcileUntitledContentState()
         handleUntitledSaveInputChange()
+    }
+
+    /// Normalize the editor before either the single-window or application-wide
+    /// NSDocument review. This is intentionally synchronous: AppKit may have
+    /// cached that a review is needed before calling the controller override.
+    func prepareForUnsavedDocumentReview() {
+        editor?.commitMarkedTextForDocumentReview()
+        reconcileUntitledContentState()
+    }
+
+    private var isDiscardableBlankUntitled: Bool {
+        guard let editor else { return false }
+        return UntitledDocumentContentPolicy.isDiscardableBlankUntitled(
+            hasFileURL: fileURL != nil,
+            rawSource: editor.rawSource,
+            hasMarkedText: editor.hasMarkedText()
+        )
+    }
+
+    /// Untitled buffers use semantic content, not historical edit-event count,
+    /// as their saved baseline. Clearing whitespace makes the draft disposable;
+    /// Undo or continued typing that restores real content makes it dirty again.
+    private func reconcileUntitledContentState() {
+        guard let editor else { return }
+        switch UntitledDocumentContentPolicy.dirtyStateAction(
+            hasFileURL: fileURL != nil,
+            rawSource: editor.rawSource,
+            hasMarkedText: editor.hasMarkedText(),
+            isDocumentEdited: isDocumentEdited
+        ) {
+        case .markEdited:
+            updateChangeCount(.changeDone)
+        case .clearEdited:
+            updateChangeCount(.changeCleared)
+        case .none:
+            break
+        }
     }
 
     @objc private func untitledAutoSaveSettingsDidChange(_ notification: Notification) {

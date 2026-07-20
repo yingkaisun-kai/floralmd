@@ -14,7 +14,7 @@ public enum QuickCapturePolicy {
                                          rawSource: String) -> Bool {
         isQuickCapture
             && !hasFileURL
-            && rawSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && UntitledDocumentContentPolicy.isBlank(rawSource)
     }
 
     /// Shrink around the window's current center and keep the result entirely

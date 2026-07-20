@@ -1,6 +1,42 @@
 import Darwin
 import Foundation
 
+/// One product-wide definition of whether an untitled buffer contains a note.
+/// Whitespace-only Markdown has no persisted meaning by itself, so first-save,
+/// Quick Capture reuse, dirty presentation, and close review must agree on it.
+public enum UntitledDocumentContentPolicy {
+    public enum DirtyStateAction: Equatable, Sendable {
+        case none
+        case markEdited
+        case clearEdited
+    }
+
+    public static func isBlank(_ rawSource: String) -> Bool {
+        rawSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public static func isDiscardableBlankUntitled(
+        hasFileURL: Bool,
+        rawSource: String,
+        hasMarkedText: Bool
+    ) -> Bool {
+        !hasFileURL && !hasMarkedText && isBlank(rawSource)
+    }
+
+    public static func dirtyStateAction(
+        hasFileURL: Bool,
+        rawSource: String,
+        hasMarkedText: Bool,
+        isDocumentEdited: Bool
+    ) -> DirtyStateAction {
+        guard !hasFileURL, !hasMarkedText else { return .none }
+        if isBlank(rawSource) {
+            return isDocumentEdited ? .clearEdited : .none
+        }
+        return isDocumentEdited ? .none : .markEdited
+    }
+}
+
 /// Pure policy and state transitions for automatically giving a draft its
 /// first file URL. Subsequent saves remain entirely owned by NSDocument.
 public enum UntitledDocumentSavePolicy {
@@ -13,7 +49,7 @@ public enum UntitledDocumentSavePolicy {
         enabled
             && !hasFileURL
             && !hasMarkedText
-            && !rawSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !UntitledDocumentContentPolicy.isBlank(rawSource)
     }
 
     public static func debounceDelay(requestedInterval: TimeInterval) -> TimeInterval {

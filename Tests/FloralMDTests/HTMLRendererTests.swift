@@ -117,6 +117,13 @@ struct HTMLRendererCoreTests {
         #expect(out.contains("<tbody><tr><td style=\"text-align:left\">1</td>"))
     }
 
+    @Test("Table headers default to the same left alignment as body cells")
+    func defaultTableAlignment() {
+        let out = html("| name | status |\n|---|---|\n| Floral | active |")
+        #expect(out.contains("<th style=\"text-align:left\">name</th>"))
+        #expect(out.contains("<td style=\"text-align:left\">Floral</td>"))
+    }
+
     @Test("Thematic break → <hr>")
     func thematicBreak() {
         #expect(html("---").contains("<hr>"))

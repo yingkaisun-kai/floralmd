@@ -66,4 +66,26 @@ struct MarkedTextDesyncTests {
         #expect((editor.rawSource as NSString).length == before - 1)
         #expect(editor.textStorage!.string == editor.rawSource)
     }
+
+    /// Close/Quit review must not mistake provisional IME text for an empty
+    /// untitled document. Committing the marked range synchronizes the source
+    /// and marks the owning document edited before NSDocument reviews it.
+    @Test func documentReviewCommitsMarkedTextBeforeDirtyDecision() {
+        let editor = makeEditor()
+        let document = NSDocument()
+        editor.document = document
+
+        editor.setMarkedText("拼", selectedRange: NSRange(location: 1, length: 0),
+                             replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(editor.hasMarkedText())
+        #expect(editor.rawSource.isEmpty)
+        #expect(!document.isDocumentEdited)
+
+        editor.commitMarkedTextForDocumentReview()
+
+        #expect(!editor.hasMarkedText())
+        #expect(editor.rawSource == "拼")
+        #expect(editor.textStorage?.string == editor.rawSource)
+        #expect(document.isDocumentEdited)
+    }
 }

@@ -3,6 +3,15 @@ import Testing
 import AppKit
 @testable import FloralMDCore
 
+@MainActor private final class UndoChangeNotificationProbe: NSObject {
+    var sources: [String] = []
+
+    @objc func editorDidChange(_ notification: Notification) {
+        guard let editor = notification.object as? EditorTextView else { return }
+        sources.append(editor.rawSource)
+    }
+}
+
 // MARK: - Undo
 
 @Suite("EditorTextView — Undo")
@@ -49,6 +58,93 @@ struct EditorUndoTests {
         #expect(editor.undoStack.count == 1)
         editor.undo(nil)
         #expect(editor.rawSource == "")
+    }
+
+    @Test("One coalesced typing run returns the document to clean after undo")
+    @MainActor func undoRestoresDocumentChangeCount() {
+        let editor = makeEditor()
+        let document = NSDocument()
+        editor.document = document
+
+        type("hello", into: editor)
+        #expect(document.isDocumentEdited)
+
+        editor.undo(nil)
+        #expect(!document.isDocumentEdited)
+
+        editor.redo(nil)
+        #expect(document.isDocumentEdited)
+    }
+
+    @Test("Full-selection delete survives the untitled semantic clean boundary")
+    @MainActor func fullSelectionDeleteTracksDocumentChangeCount() {
+        let editor = makeEditor()
+        let document = NSDocument()
+        editor.document = document
+
+        type("hello", into: editor)
+        editor.setSelectedRange(NSRange(location: 0, length: 5))
+        pressBackspace(in: editor)
+        #expect(UntitledDocumentContentPolicy.dirtyStateAction(
+            hasFileURL: false, rawSource: editor.rawSource, hasMarkedText: false,
+            isDocumentEdited: document.isDocumentEdited
+        ) == .clearEdited)
+        document.updateChangeCount(.changeCleared)
+
+        #expect(editor.rawSource.isEmpty)
+        #expect(!document.isDocumentEdited)
+
+        editor.undo(nil)
+        #expect(editor.rawSource == "hello")
+        #expect(document.isDocumentEdited)
+
+        editor.redo(nil)
+        #expect(editor.rawSource.isEmpty)
+        #expect(UntitledDocumentContentPolicy.dirtyStateAction(
+            hasFileURL: false, rawSource: editor.rawSource, hasMarkedText: false,
+            isDocumentEdited: document.isDocumentEdited
+        ) == .none)
+        #expect(!document.isDocumentEdited)
+    }
+
+    @Test("Undo and redo publish synchronized source notifications")
+    @MainActor func undoRedoPublishSynchronizedChanges() {
+        let editor = makeEditor()
+        type("hello", into: editor)
+        let probe = UndoChangeNotificationProbe()
+        NotificationCenter.default.addObserver(
+            probe, selector: #selector(UndoChangeNotificationProbe.editorDidChange(_:)),
+            name: .editorDidSynchronizeText, object: editor
+        )
+        defer { NotificationCenter.default.removeObserver(probe) }
+
+        editor.undo(nil)
+        editor.redo(nil)
+
+        #expect(probe.sources == ["", "hello"])
+    }
+
+    @Test("A save boundary splits a continuing typing run")
+    @MainActor func saveBoundarySplitsTypingRun() {
+        let editor = makeEditor()
+        let document = NSDocument()
+        editor.document = document
+
+        type("a", into: editor)
+        document.updateChangeCount(.changeCleared)
+        editor.breakUndoCoalescingAfterSave()
+        type("b", into: editor)
+
+        #expect(editor.rawSource == "ab")
+        #expect(document.isDocumentEdited)
+
+        editor.undo(nil)
+        #expect(editor.rawSource == "a")
+        #expect(!document.isDocumentEdited)
+
+        editor.undo(nil)
+        #expect(editor.rawSource == "")
+        #expect(document.isDocumentEdited)
     }
 
     @Test("Undo separates insert and delete groups")

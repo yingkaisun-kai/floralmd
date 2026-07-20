@@ -53,6 +53,7 @@ enum AppSettings {
     enum LogRetention: String, CaseIterable, Identifiable {
         case oneDay, twoDays, oneWeek, twoWeeks, thirtyDays, never
         var id: Self { self }
+        static let defaultValue = LogRetention.twoWeeks
         var label: String {
             switch self {
             case .oneDay: return AppCopy.text("1 day", "1 天")

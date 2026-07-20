@@ -83,4 +83,64 @@ struct TypewriterCenteringTests {
         let delta = offFromCenter(editor, scroll, caretOffset: off)
         #expect(delta < 4, "off-screen line off-center by \(delta)pt")
     }
+
+    @Test("Return centers a terminal empty line before another character")
+    @MainActor func returnCentersTerminalEmptyLineImmediately() {
+        let (editor, _) = makeWindowed()
+        let doc = (1...60).map { "Line \($0) content here for the document body." }
+            .joined(separator: "\n")
+        editor.loadContent(doc)
+        ensureFullLayout(editor)
+        editor.sizeToFit()
+        editor.layoutSubtreeIfNeeded()
+        editor.setSelectedRange(NSRange(location: (doc as NSString).length, length: 0))
+
+        editor.insertText("\n", replacementRange: NSRange(location: NSNotFound, length: 0))
+        editor.layoutSubtreeIfNeeded()
+
+        let delta = abs(editor.reproTypewriterCenterDelta() ?? .greatestFiniteMagnitude)
+        #expect(delta < 4, "terminal empty line off-center by \(delta)pt; \(editor.reproInputGeometryState)")
+        #expect(editor.rawSource == editor.string)
+
+        editor.typewriterModeEnabled = false
+        #expect(editor.minSize.height == 0)
+    }
+
+    @Test("Consecutive Returns and immediate Backspace keep the terminal line centered")
+    @MainActor func consecutiveReturnsAndBackspaceStayCentered() {
+        let (editor, _) = makeWindowed()
+        let doc = (1...60).map { "Line \($0) content." }.joined(separator: "\n")
+        editor.loadContent(doc)
+        ensureFullLayout(editor)
+        editor.sizeToFit()
+        editor.setSelectedRange(NSRange(location: (doc as NSString).length, length: 0))
+
+        for _ in 0..<3 {
+            editor.insertText("\n", replacementRange: NSRange(location: NSNotFound, length: 0))
+            editor.layoutSubtreeIfNeeded()
+            #expect(abs(editor.reproTypewriterCenterDelta() ?? .greatestFiniteMagnitude) < 4)
+        }
+
+        editor.deleteBackward(nil)
+        editor.layoutSubtreeIfNeeded()
+        #expect(abs(editor.reproTypewriterCenterDelta() ?? .greatestFiniteMagnitude) < 4)
+        #expect(editor.rawSource == editor.string)
+    }
+
+    @Test("Return with typewriter mode disabled does not manufacture bottom room")
+    @MainActor func returnWithoutTypewriterDoesNotAddBottomRoom() {
+        let (editor, _) = makeWindowed()
+        let doc = (1...60).map { "Line \($0) content." }.joined(separator: "\n")
+        editor.loadContent(doc)
+        ensureFullLayout(editor)
+        editor.sizeToFit()
+        editor.typewriterModeEnabled = false
+        editor.setSelectedRange(NSRange(location: (doc as NSString).length, length: 0))
+        editor.insertText("\n", replacementRange: NSRange(location: NSNotFound, length: 0))
+        editor.layoutSubtreeIfNeeded()
+
+        #expect(editor.minSize.height == 0)
+        #expect(abs(editor.reproTypewriterCenterDelta() ?? 0) > 4)
+        #expect(editor.rawSource == editor.string)
+    }
 }

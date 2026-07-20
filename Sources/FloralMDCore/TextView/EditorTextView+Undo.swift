@@ -24,7 +24,8 @@ extension EditorTextView {
     }
 
     /// Push an undo snapshot if this edit starts a new coalescing group.
-    func recordUndoIfNeeded(editRange: NSRange, replacement: String) {
+    @discardableResult
+    func recordUndoIfNeeded(editRange: NSRange, replacement: String) -> Bool {
         let editType = classifyEdit(range: editRange, replacement: replacement)
 
         let shouldPush = undoStack.isEmpty
@@ -39,18 +40,32 @@ extension EditorTextView {
 
         lastEditType = editType
         lastEditBlockIndex = activeBlockIndex
+        return shouldPush
     }
 
     func performUndo() {
         guard let snapshot = undoStack.popLast() else { return }
         redoStack.append(UndoSnapshot(rawSource: rawSource, cursorInRaw: currentCursorInRaw()))
-        restoreSnapshot(snapshot)
+        if restoreSnapshot(snapshot) {
+            publishSynchronizedTextChange(.changeUndone)
+        }
     }
 
     func performRedo() {
         guard let snapshot = redoStack.popLast() else { return }
         undoStack.append(UndoSnapshot(rawSource: rawSource, cursorInRaw: currentCursorInRaw()))
-        restoreSnapshot(snapshot)
+        if restoreSnapshot(snapshot) {
+            publishSynchronizedTextChange(.changeRedone)
+        }
+    }
+
+    /// A save establishes a new NSDocument baseline even if it lands in the
+    /// middle of a typing run. Force the next edit to start a fresh custom undo
+    /// group so it also receives a fresh `.changeDone` after the save token.
+    public func breakUndoCoalescingAfterSave() {
+        lastEditType = .other
+        lastEditBlockIndex = nil
+        pendingDocumentChangeGroupStart = false
     }
 
     /// The single contiguous span that differs between two strings, as the
@@ -87,7 +102,8 @@ extension EditorTextView {
         return (oldRange, replacement)
     }
 
-    private func restoreSnapshot(_ snapshot: UndoSnapshot) {
+    @discardableResult
+    private func restoreSnapshot(_ snapshot: UndoSnapshot) -> Bool {
         // Diff the current text against the snapshot: the changed span is what
         // this undo/redo actually touches, so it drives the selection and the
         // viewport — not the caret stored at snapshot time (which, for redo,
@@ -96,7 +112,7 @@ extension EditorTextView {
             // Nothing changed textually — just restore the caret.
             let clamped = min(snapshot.cursorInRaw, (rawSource as NSString).length)
             setSelectedRange(NSRange(location: clamped, length: 0))
-            return
+            return false
         }
 
         isUndoRedoing = true
@@ -170,5 +186,6 @@ extension EditorTextView {
         isUndoRedoing = false
         lastEditType = .other
         lastEditBlockIndex = nil
+        return true
     }
 }

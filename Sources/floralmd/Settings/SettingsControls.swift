@@ -125,6 +125,22 @@ struct SettingsStatusBadge: View {
     }
 }
 
+struct SettingsResetButton: View {
+    let label: String
+    let isDisabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.counterclockwise")
+        }
+        .buttonStyle(.borderless)
+        .help(label)
+        .accessibilityLabel(label)
+        .disabled(isDisabled)
+    }
+}
+
 extension View {
     func settingsSupportingText() -> some View {
         foregroundStyle(.secondary)

@@ -10,10 +10,23 @@ import FloralMDCore
 /// CGEvents at the app; this keeps live-app bug repros scriptable without
 /// Accessibility permission. Commands, one per line:
 ///   sleep <ms>        wait before the next command
+///   new               create and target a fresh Untitled document
 ///   caret <needle>    place the caret before the first occurrence of <needle>
 ///   type <text>       type text, one key event per character
 ///   backspace <n>     press delete n times (300ms apart)
+///   space <n>         insert n literal spaces
+///   mark <text>       set provisional IME marked text
 ///   tab / backtab     indent / dedent the selected list line(s)
+///   undo / redo       run the editor's custom history action
+///   prepareclose      synchronously normalize content for document review
+///   assertdirty <bool> assert the owning NSDocument dirty state
+///   assertmarked <bool> assert whether the editor has marked text
+///   assertrawlen <n>  assert synchronized source UTF-16 length
+///   assertdocs <n>    assert the live NSDocumentController document count
+///   assertindicator   assert the explicit short caret matches logical caret x
+///   assertcentered    assert the logical caret is at the typewriter target
+///   loginput          log marked/selection/indicator/viewport geometry
+///   close / quit      exercise NSDocument close or app termination review
 ///   scroll <y>        scroll the clip view to y (bypasses the caret/typewriter
 ///                     recentering, so a block can be driven off-screen)
 ///   logsel            log the current selection
@@ -32,6 +45,11 @@ enum ReproScript {
             switch cmd {
             case "sleep":
                 delay += (Double(arg) ?? 0) / 1000
+            case "new":
+                scheduleWithoutEditor(after: delay) {
+                    _ = try? NSDocumentController.shared.openUntitledDocumentAndDisplay(true)
+                }
+                delay += 0.2
             case "caret":
                 schedule(after: delay) { editor in
                     let r = (editor.rawSource as NSString).range(of: arg)
@@ -104,6 +122,20 @@ enum ReproScript {
                     schedule(after: delay) { $0.insertText(s, replacementRange: NSRange(location: NSNotFound, length: 0)) }
                     delay += 0.08
                 }
+            case "space":
+                for _ in 0 ..< (Int(arg) ?? 1) {
+                    schedule(after: delay) {
+                        $0.insertText(" ", replacementRange: NSRange(location: NSNotFound, length: 0))
+                    }
+                    delay += 0.05
+                }
+            case "mark":
+                schedule(after: delay) {
+                    $0.setMarkedText(arg,
+                                     selectedRange: NSRange(location: (arg as NSString).length, length: 0),
+                                     replacementRange: NSRange(location: NSNotFound, length: 0))
+                }
+                delay += 0.05
             case "backspace":
                 for _ in 0 ..< (Int(arg) ?? 1) {
                     schedule(after: delay) { $0.deleteBackward(nil) }
@@ -117,6 +149,17 @@ enum ReproScript {
                 delay += 0.05
             case "backtab":
                 schedule(after: delay) { $0.insertBacktab(nil) }
+                delay += 0.05
+            case "undo":
+                schedule(after: delay) { $0.undo(nil) }
+                delay += 0.05
+            case "redo":
+                schedule(after: delay) { $0.redo(nil) }
+                delay += 0.05
+            case "prepareclose":
+                schedule(after: delay) { editor in
+                    (editor.document as? Document)?.prepareForUnsavedDocumentReview()
+                }
                 delay += 0.05
             case "bypassdelete":
                 // Mimics AppKit's drag-move source deletion (the issue-#156
@@ -154,6 +197,65 @@ enum ReproScript {
                     Log.info("repro assertcaret \(ok ? "PASS" : "FAIL") " +
                              "sel=\(sel) want=\(want) needle=\(arg)", category: .app)
                 }
+            case "assertdirty":
+                schedule(after: delay) { editor in
+                    let want = (arg as NSString).boolValue
+                    let actual = editor.document?.isDocumentEdited == true
+                    Log.info("repro assertdirty \(actual == want ? "PASS" : "FAIL") " +
+                             "actual=\(actual) want=\(want)", category: .app)
+                }
+            case "assertmarked":
+                schedule(after: delay) { editor in
+                    let want = (arg as NSString).boolValue
+                    let actual = editor.hasMarkedText()
+                    Log.info("repro assertmarked \(actual == want ? "PASS" : "FAIL") " +
+                             "actual=\(actual) want=\(want)", category: .app)
+                }
+            case "assertrawlen":
+                schedule(after: delay) { editor in
+                    let actual = (editor.rawSource as NSString).length
+                    let want = Int(arg) ?? -1
+                    Log.info("repro assertrawlen \(actual == want ? "PASS" : "FAIL") " +
+                             "actual=\(actual) want=\(want)", category: .app)
+                }
+            case "assertdocs":
+                schedule(after: delay) { _ in
+                    let actual = NSDocumentController.shared.documents.count
+                    let want = Int(arg) ?? -1
+                    Log.info("repro assertdocs \(actual == want ? "PASS" : "FAIL") " +
+                             "actual=\(actual) want=\(want)", category: .app)
+                }
+            case "assertindicator":
+                schedule(after: delay) { editor in
+                    let delta = editor.reproInsertionIndicatorDelta()
+                    let ok = delta.map { abs($0) <= 1 } == true
+                    let deltaDescription = delta.map { String(describing: $0) } ?? "nil"
+                    let result = ok ? "PASS" : "FAIL"
+                    Log.info("repro assertindicator \(result) "
+                             + "delta=\(deltaDescription) "
+                             + editor.reproInputGeometryState,
+                             category: .app)
+                }
+            case "assertcentered":
+                schedule(after: delay) { editor in
+                    let delta = editor.reproTypewriterCenterDelta()
+                    let ok = delta.map { abs($0) <= 4 } == true
+                    let deltaDescription = delta.map { String(describing: $0) } ?? "nil"
+                    let result = ok ? "PASS" : "FAIL"
+                    Log.info("repro assertcentered \(result) "
+                             + "delta=\(deltaDescription) "
+                             + editor.reproInputGeometryState,
+                             category: .app)
+                }
+            case "loginput":
+                schedule(after: delay) { editor in
+                    Log.info("repro loginput " + editor.reproInputGeometryState,
+                             category: .app)
+                }
+            case "close":
+                schedule(after: delay) { $0.window?.performClose(nil) }
+            case "quit":
+                schedule(after: delay) { _ in NSApp.terminate(nil) }
             case "logsel":
                 schedule(after: delay) { editor in
                     Log.info("repro logsel sel=\(editor.selectedRange()) " +
@@ -186,10 +288,15 @@ enum ReproScript {
     private static func schedule(after: TimeInterval,
                                  _ body: @escaping @MainActor (EditorTextView) -> Void) {
         DispatchQueue.main.asyncAfter(deadline: .now() + after) {
-            guard let doc = NSDocumentController.shared.documents.first as? Document,
+            guard let doc = NSDocumentController.shared.documents.last as? Document,
                   let editor = doc.editor else { return }
             body(editor)
         }
+    }
+
+    private static func scheduleWithoutEditor(after: TimeInterval,
+                                              _ body: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + after, execute: body)
     }
 
     /// Sends a key event through the window so it takes the full AppKit

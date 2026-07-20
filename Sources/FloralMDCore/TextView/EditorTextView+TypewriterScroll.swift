@@ -131,6 +131,19 @@ extension EditorTextView {
         let cursorY = lineRect.midY + textContainerOrigin.y
 
         let visibleHeight = scrollView.contentView.bounds.height
+        // TextKit 2 absorbs a trailing newline into the preceding fragment, so
+        // NSTextView's document frame has no bottom room for centering the
+        // terminal empty line. Grow view geometry only; storage remains raw
+        // Markdown and no layout is forced beyond the caret region.
+        if selectedRange().location == (textStorage?.length ?? -1) {
+            let requiredHeight = ceil(cursorY + visibleHeight / 2)
+            minSize = NSSize(width: minSize.width, height: requiredHeight)
+            if frame.height < requiredHeight {
+                setFrameSize(NSSize(width: frame.width, height: requiredHeight))
+            }
+        } else if minSize.height > 0 {
+            minSize = NSSize(width: minSize.width, height: 0)
+        }
         let targetY = cursorY - visibleHeight / 2
         let maxY = max(0, frame.height - visibleHeight)
         let clampedY = min(max(0, targetY), maxY)
@@ -264,6 +277,19 @@ extension EditorTextView {
     /// position is exact; for far jumps it may be a TextKit 2 estimate that
     /// the scroll anchoring + promotion settle once the region is reached.
     func lineRect(forCharacterAt offset: Int) -> CGRect? {
+        let source = textStorage?.string ?? rawSource
+        let length = (source as NSString).length
+        if offset == length, offset > 0, source.hasSuffix("\n"),
+           let previous = lineRect(forCharacterAt: offset - 1) {
+            // The final empty paragraph has no fragment. Advance one effective
+            // line box from the preceding newline so Return can scroll now.
+            // TextKit keeps both user spacing values outside typographicBounds;
+            // omitting them makes the caret jump only when the first glyph
+            // creates real geometry for this paragraph.
+            let spacing = theme.lineSpacing + theme.paragraphSpacingBefore
+            return CGRect(x: previous.minX, y: previous.maxY + spacing,
+                          width: previous.width, height: previous.height)
+        }
         guard let tlm = textLayoutManager else { return nil }
         guard let loc = tlm.location(tlm.documentRange.location, offsetBy: offset)
         else { return nil }

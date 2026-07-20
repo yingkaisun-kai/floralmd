@@ -13,6 +13,11 @@ import FloralMDCore
 /// (the genuinely AppKit-bound part of the Appearance pane).
 @MainActor
 final class FontSettings: NSObject, ObservableObject {
+    static let defaultStandardSize = EditorTheme.default.fontSize
+    static let defaultMonospaceSize = EditorTheme.default.monospaceFontSize
+    static let defaultLineHeight = (EditorTheme.default.fontSize + EditorTheme.default.lineSpacing)
+        / EditorTheme.default.fontSize
+
     @Published var standardFont: NSFont
     @Published var cjkFont: NSFont
     @Published var monospaceFont: NSFont

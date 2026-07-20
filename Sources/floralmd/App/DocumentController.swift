@@ -75,6 +75,21 @@ class DocumentController: NSDocumentController {
                                          delegate: Any?,
                                          didReviewAllSelector: Selector?,
                                          contextInfo: UnsafeMutableRawPointer?) {
+        documents.compactMap { $0 as? Document }
+            .forEach { $0.prepareForUnsavedDocumentReview() }
+
+        // AppKit can enter this override using the dirty state from before our
+        // synchronous untitled reconciliation. If every live document is now
+        // clean, complete the public callback instead of asking `super` to act
+        // on that stale decision.
+        if !documents.contains(where: { $0.isDocumentEdited || $0.hasUnautosavedChanges }) {
+            if finishTerminationReview(delegate: delegate,
+                                       selector: didReviewAllSelector,
+                                       contextInfo: contextInfo) {
+                return
+            }
+        }
+
         guard AppSettings.autoSaveWithVersions,
               !isPreparingAutomaticTermination else {
             continueTerminationReview(withAlertTitle: title,

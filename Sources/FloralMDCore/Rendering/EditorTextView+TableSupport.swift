@@ -19,11 +19,12 @@ import AppKit
 enum ColumnAlign: Equatable { case left, center, right }
 
 /// Fits natural table-column widths into the editor column while preserving a
-/// shared grid. Columns keep their natural size when possible; when the table
-/// is wider than the editor, each column receives a readable minimum and the
-/// remaining width is distributed in proportion to its natural excess.
+/// shared grid. Compact tables expand to a readable share of the text column;
+/// over-wide tables shrink to the available width, with a per-column cap so a
+/// long path/hash/unbroken word cannot monopolize the table.
 func fittedTableColumnWidths(_ natural: [CGFloat], maximumWidth: CGFloat,
-                             minimumWidth: CGFloat) -> [CGFloat] {
+                             minimumWidth: CGFloat,
+                             minimumTableWidth: CGFloat = 0) -> [CGFloat] {
     guard !natural.isEmpty else { return [] }
     let cap = max(CGFloat(natural.count), maximumWidth)
     let count = CGFloat(natural.count)
@@ -34,10 +35,34 @@ func fittedTableColumnWidths(_ natural: [CGFloat], maximumWidth: CGFloat,
     let maximumShare = min(CGFloat(0.60), max(CGFloat(0.35), CGFloat(1.35) / count))
     let perColumnCap = cap * maximumShare
     let limited = natural.map { min($0, perColumnCap) }
-    if natural.reduce(0, +) <= cap && natural.allSatisfy({ $0 <= perColumnCap }) {
-        return natural
+    let minimumTotal = min(cap, max(0, minimumTableWidth))
+
+    func expandedToMinimum(_ widths: [CGFloat]) -> [CGFloat] {
+        let total = widths.reduce(0, +)
+        guard total < minimumTotal else { return widths }
+        // Share extra room evenly while preserving the anti-monopoly cap.
+        var result = widths
+        var remaining = minimumTotal - total
+        var flexible = result.indices.filter { result[$0] < perColumnCap - 0.5 }
+        while remaining > 0.5, !flexible.isEmpty {
+            let share = remaining / CGFloat(flexible.count)
+            var distributed: CGFloat = 0
+            for index in flexible {
+                let addition = min(share, perColumnCap - result[index])
+                result[index] += addition
+                distributed += addition
+            }
+            guard distributed > 0.5 else { break }
+            remaining -= distributed
+            flexible = flexible.filter { result[$0] < perColumnCap - 0.5 }
+        }
+        return result
     }
-    if limited.reduce(0, +) <= cap { return limited }
+
+    if natural.reduce(0, +) <= cap && natural.allSatisfy({ $0 <= perColumnCap }) {
+        return expandedToMinimum(natural)
+    }
+    if limited.reduce(0, +) <= cap { return expandedToMinimum(limited) }
 
     let floor = min(minimumWidth, cap / count)
     let availableExtra = max(0, cap - floor * count)

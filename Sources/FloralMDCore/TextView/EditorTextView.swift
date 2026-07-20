@@ -96,6 +96,12 @@ public class EditorTextView: NSTextView {
     /// Coalesces the deferred full-document layout settle for small documents
     /// (see EditorTextView+LazyStyling `scheduleFullLayoutSettle`).
     var fullLayoutSettleScheduled = false
+    /// TextKit 2's system caret includes line spacing and bypasses the public
+    /// draw hook. This explicit foreground indicator is positioned and blinked
+    /// by EditorTextView+InsertionPoint while the system caret stays clear.
+    let fontHeightInsertionIndicator = NSTextInsertionIndicator(frame: .zero)
+    var insertionIndicatorUpdateScheduled = false
+    var insertionIndicatorBlinkTimer: Timer?
     /// Documents at or below this UTF-16 length are laid out in full once
     /// styling converges, eliminating TextKit 2 height estimates (and the
     /// scroll jumps they cause). See `scheduleFullLayoutSettle`.
@@ -115,6 +121,11 @@ public class EditorTextView: NSTextView {
     var lastEditBlockIndex: Int? = nil
     var lastEditType: EditType = .other
     var isUndoRedoing = false
+    /// The first storage mutation in a custom undo group owns the matching
+    /// NSDocument `.changeDone`. Later characters in the same typing run must
+    /// not increment the document count again or one Undo could never return
+    /// the document to its saved baseline.
+    var pendingDocumentChangeGroupStart = false
 
     /// The separator between blocks in the display.
     /// Must match what BlockParser splits on.
@@ -162,7 +173,14 @@ public class EditorTextView: NSTextView {
     /// vertically centered (typewriter scrolling); when false, scrolling falls
     /// back to "keep the cursor visible". Toggled from the View menu. The
     /// scrolling logic lives in EditorTextView+TypewriterScroll.
-    public var typewriterModeEnabled: Bool = true
+    public var typewriterModeEnabled: Bool = true {
+        didSet {
+            guard oldValue != typewriterModeEnabled else { return }
+            if !typewriterModeEnabled {
+                minSize = NSSize(width: minSize.width, height: 0)
+            }
+        }
+    }
 
     /// Set to true for the duration of a mouse-down event so that the
     /// resulting selection change does not trigger typewriter centering.
@@ -241,6 +259,9 @@ public class EditorTextView: NSTextView {
         if antialiasChanged, let tlm = textLayoutManager {
             tlm.invalidateLayout(for: tlm.documentRange)
         }
+        insertionPointColor = .clear
+        fontHeightInsertionIndicator.color = accentColor
+        scheduleFontHeightInsertionIndicatorUpdate()
     }
 
     var baseAttributes: [NSAttributedString.Key: Any] {
@@ -290,7 +311,11 @@ public class EditorTextView: NSTextView {
 
         textAntialias = theme.antialias
         backgroundColor = editorBackgroundColor
-        insertionPointColor = accentColor
+        insertionPointColor = .clear
+        fontHeightInsertionIndicator.color = accentColor
+        fontHeightInsertionIndicator.displayMode = .hidden
+        fontHeightInsertionIndicator.automaticModeOptions = []
+        addSubview(fontHeightInsertionIndicator)
         selectedTextAttributes = [
             .backgroundColor: selectionHighlightColor,
             .foregroundColor: foregroundColor,
@@ -391,6 +416,11 @@ public class EditorTextView: NSTextView {
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         installScrollPromotionObserver()
+        if window == nil {
+            stopFontHeightInsertionIndicator()
+        } else {
+            scheduleFontHeightInsertionIndicatorUpdate()
+        }
     }
 
     // MARK: - Appearance
@@ -399,13 +429,15 @@ public class EditorTextView: NSTextView {
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         backgroundColor = editorBackgroundColor
-        insertionPointColor = accentColor
+        insertionPointColor = .clear
+        fontHeightInsertionIndicator.color = accentColor
         selectedTextAttributes = [
             .backgroundColor: selectionHighlightColor,
             .foregroundColor: foregroundColor,
         ]
         typingAttributes = baseAttributes
         recomposeAllDirty()
+        scheduleFontHeightInsertionIndicatorUpdate()
     }
 
     // MARK: - Link Following
@@ -492,8 +524,45 @@ public class EditorTextView: NSTextView {
     /// This formalizes the focus-switch recovery users already stumble into.
     public override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
-        if became { recoverFromStrandedCompositionIfNeeded() }
+        if became {
+            recoverFromStrandedCompositionIfNeeded()
+            scheduleFontHeightInsertionIndicatorUpdate()
+        }
         return became
+    }
+
+    public override func resignFirstResponder() -> Bool {
+        stopFontHeightInsertionIndicator()
+        return super.resignFirstResponder()
+    }
+
+    /// Marked-text updates are not committed edits, so didChangeText correctly
+    /// defers model sync. They still move the IME's internal insertion point;
+    /// refresh only the foreground short caret after AppKit updates that state.
+    public override func setMarkedText(_ string: Any,
+                                       selectedRange: NSRange,
+                                       replacementRange: NSRange) {
+        super.setMarkedText(string,
+                            selectedRange: selectedRange,
+                            replacementRange: replacementRange)
+        traceEdit("setMarkedText selected=\(selectedRange) replacement=\(replacementRange)")
+        scheduleFontHeightInsertionIndicatorUpdate()
+    }
+
+    public override func unmarkText() {
+        super.unmarkText()
+        traceEdit("unmarkText")
+        scheduleFontHeightInsertionIndicatorUpdate()
+    }
+
+    /// Window close and application termination can begin while an input method
+    /// still owns provisional marked text. End the marking before NSDocument
+    /// decides whether there is anything to save; otherwise `rawSource` may
+    /// still look blank while storage contains the user's composition.
+    public func commitMarkedTextForDocumentReview() {
+        guard hasMarkedText() else { return }
+        unmarkText()
+        recoverFromStrandedCompositionIfNeeded()
     }
 
     func recoverFromStrandedCompositionIfNeeded() {
@@ -512,6 +581,10 @@ public class EditorTextView: NSTextView {
         rebuildLinkDefState()
         blocks = BlockParser.parse(rawSource, previous: blocks)
         recompose(cursorInRaw: min(selectedRange().location, (rawSource as NSString).length))
+        let startsUndoGroup = consumePendingDocumentChangeGroupStart()
+        publishSynchronizedTextChange(
+            startsUndoGroup || document?.isDocumentEdited == false ? .changeDone : nil
+        )
     }
 
     // MARK: - Helpers
@@ -592,6 +665,9 @@ public class EditorTextView: NSTextView {
             Log.blockStructure(blocks)
             undoStack.removeAll()
             redoStack.removeAll()
+            pendingDocumentChangeGroupStart = false
+            lastEditType = .other
+            lastEditBlockIndex = nil
             let length = (rawSource as NSString).length
             let location = min(selection.location, length)
             let clampedSelection = NSRange(

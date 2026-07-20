@@ -3,8 +3,7 @@
 
 ## Supported Versions
 
-FloralMD is in beta (pre-1.0). Only the latest released version is supported
-with security fixes.
+Only the latest stable release of FloralMD is supported with security fixes.
 
 | Version | Supported |
 | ------- | --------- |

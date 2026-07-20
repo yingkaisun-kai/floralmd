@@ -80,11 +80,14 @@ struct HTMLThemeTests {
         #expect(out.contains("--fg: #1a1a1a;"))
     }
 
-    @Test("Wide tables scroll horizontally instead of wrapping cell text")
-    func tableScrolls() {
+    @Test("Read tables use the shared open-table presentation")
+    func tablePresentation() {
         let out = css(dark: false)
         #expect(out.contains(".table-wrap { overflow-x: auto; margin: 1em 0; }"))
-        #expect(!out.contains("overflow-wrap"))
+        #expect(out.contains("min-width: 66.667%; max-width: 100%"))
+        #expect(out.contains("overflow-wrap: anywhere"))
+        #expect(out.contains("thead tr, tbody tr:not(:last-child)"))
+        #expect(!out.contains("th, td { border:"))
     }
 
     @Test("Read headings and lists use the expanded vertical rhythm")

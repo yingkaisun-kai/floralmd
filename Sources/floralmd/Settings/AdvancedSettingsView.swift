@@ -7,7 +7,8 @@ struct AdvancedSettingsView: View {
     @AppStorage(AppSettings.Key.blockExternalImages) private var blockExternalImages = true
     @AppStorage(AppSettings.Key.diagnosticLogging) private var diagnosticLogging = false
     @AppStorage(AppSettings.Key.verboseEditorDiagnostics) private var verboseEditorDiagnostics = false
-    @AppStorage(AppSettings.Key.logRetention) private var logRetention = AppSettings.LogRetention.twoWeeks
+    @AppStorage(AppSettings.Key.logRetention)
+    private var logRetention = AppSettings.LogRetention.defaultValue
     // Crash-log sending is dormant until the receiving server exists — the toggle
     // is hidden (commented out below) so it isn't offered with nowhere to send to.
     // Restore this property and a Crash Reports card once the server is live.
@@ -44,11 +45,19 @@ struct AdvancedSettingsView: View {
                     Toggle(tr("Save diagnostic logs", "保存诊断日志"), isOn: $diagnosticLogging)
                         .onChange(of: diagnosticLogging) { AppSettings.applyLogging() }
                     LabeledContent(tr("Clear logs after", "日志保留时间")) {
-                        Picker("", selection: $logRetention) {
-                            ForEach(AppSettings.LogRetention.allCases) { Text($0.label).tag($0) }
+                        HStack(spacing: 8) {
+                            Picker("", selection: $logRetention) {
+                                ForEach(AppSettings.LogRetention.allCases) { Text($0.label).tag($0) }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            SettingsResetButton(
+                                label: tr("Restore default retention", "恢复默认保留时间"),
+                                isDisabled: logRetention == AppSettings.LogRetention.defaultValue
+                            ) {
+                                logRetention = AppSettings.LogRetention.defaultValue
+                            }
                         }
-                        .labelsHidden()
-                        .fixedSize()
                         .onChange(of: logRetention) { AppSettings.applyLogging() }
                     }
                     .disabled(!diagnosticLogging)

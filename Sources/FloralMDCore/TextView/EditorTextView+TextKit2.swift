@@ -83,12 +83,12 @@ public final class BlockDecoration: NSObject, @unchecked Sendable {
                  bottomPad: CGFloat)
         /// Vertical bar just left of the paragraph's text (plain block quotes).
         case leftBar(color: NSColor, width: CGFloat)
-        /// Table-row chrome: vertical column borders at text-relative x
-        /// offsets, and a horizontal rule through the separator row. `width`
-        /// is the table's full width; `leftInset` the text's inset from the
-        /// table's left edge.
-        case tableRow(columnXOffsets: [CGFloat], width: CGFloat,
-                      leftInset: CGFloat, separator: Bool,
+        /// Table-row chrome for the open-table style. `width` is the table's
+        /// full width and `leftInset` the text's inset from its left edge.
+        /// `separator` draws the rule below the header; `bottomBorder` draws a
+        /// rule between adjacent data rows. There is deliberately no outer
+        /// frame and no vertical divider.
+        case tableRow(width: CGFloat, leftInset: CGFloat, separator: Bool,
                       bottomBorder: Bool)
         /// Horizontal hairline across the text column, drawn `centerOffset`
         /// points below the fragment's vertical center. The offset compensates
@@ -530,16 +530,10 @@ final class DecoratedTextLayoutFragment: NSTextLayoutFragment {
             context.fill(CGRect(x: point.x - width + decoration.inset, y: barTop,
                                 width: width, height: barHeight))
 
-        case .tableRow(let xOffsets, let width, let leftInset, let separator, let bottomBorder):
-            // Offsets are text-relative; the fragment's origin is the text start.
+        case .tableRow(let width, let leftInset, let separator, let bottomBorder):
             let textX = point.x + (absorbsTrailingEmptyLine ? leftInset : 0)
             context.setStrokeColor(NSColor.separatorColor.cgColor)
             context.setLineWidth(1)
-            for x in xOffsets {
-                let lineX = round(textX + x) + 0.5
-                context.move(to: CGPoint(x: lineX, y: point.y))
-                context.addLine(to: CGPoint(x: lineX, y: point.y + frame.height))
-            }
             if separator {
                 let y = round(point.y + frame.height / 2) + 0.5
                 context.move(to: CGPoint(x: textX - leftInset, y: y))

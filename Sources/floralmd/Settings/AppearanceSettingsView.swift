@@ -91,6 +91,12 @@ struct AppearanceSettingsView: View {
                         Button(action: toggleUnit) { Text(unitLabel) }
                             .buttonStyle(.plain)
                             .help(tr("Switch between centimetres and inches", "在厘米和英寸之间切换"))
+                        SettingsResetButton(
+                            label: tr("Restore default width", "恢复默认宽度"),
+                            isDisabled: abs(maxContentWidthCm - AppSettings.defaultMaxContentWidthCm) < 0.001
+                        ) {
+                            maxContentWidthCm = AppSettings.defaultMaxContentWidthCm
+                        }
                     }
                     .onChange(of: maxContentWidthCm) { applyContentWidthToOpenDocuments() }
                 }
@@ -110,7 +116,8 @@ struct AppearanceSettingsView: View {
                                               set: { fonts.setStandardSize(CGFloat($0)) }),
                                 select: fonts.selectStandardFont,
                                 useSystem: fonts.useSystemFont,
-                                isUsingSystem: fonts.usesSystemFont)
+                                isUsingSystem: fonts.usesSystemFont,
+                                defaultSize: FontSettings.defaultStandardSize)
                         HStack(spacing: 16) {
                             Toggle(tr("Antialias", "抗锯齿"), isOn: $fonts.antialias)
                             Toggle(tr("Ligatures", "连字"), isOn: $fonts.standardLigatures)
@@ -145,7 +152,8 @@ struct AppearanceSettingsView: View {
                                 antialias: fonts.antialias,
                                 size: Binding(get: { Double(fonts.monospaceFont.pointSize) },
                                               set: { fonts.setMonospaceSize(CGFloat($0)) }),
-                                select: fonts.selectMonospaceFont)
+                                select: fonts.selectMonospaceFont,
+                                defaultSize: FontSettings.defaultMonospaceSize)
                         HStack(spacing: 16) {
                             Toggle(tr("Antialias", "抗锯齿"), isOn: $fonts.antialias)
                             Toggle(tr("Ligatures", "连字"), isOn: $fonts.monospaceLigatures)
@@ -164,6 +172,12 @@ struct AppearanceSettingsView: View {
                             Stepper("", value: lineHeight, in: 1...3, step: 0.1)
                                 .labelsHidden()
                             Text(tr("times", "倍"))
+                            SettingsResetButton(
+                                label: tr("Restore default line height", "恢复默认行高"),
+                                isDisabled: abs(fonts.lineHeight - FontSettings.defaultLineHeight) < 0.001
+                            ) {
+                                fonts.setLineHeight(FontSettings.defaultLineHeight)
+                            }
                         }
                     }
                 }
@@ -187,7 +201,8 @@ struct AppearanceSettingsView: View {
                          size: Binding<Double>, select: @escaping () -> Void,
                          useSystem: (() -> Void)? = nil,
                          isUsingSystem: Bool = false,
-                         showsSizeStepper: Bool = true) -> some View {
+                         showsSizeStepper: Bool = true,
+                         defaultSize: CGFloat? = nil) -> some View {
         HStack(spacing: 8) {
             AntialiasingText(summary)
                 .antialiasDisabled(!antialias)
@@ -196,8 +211,16 @@ struct AppearanceSettingsView: View {
             if showsSizeStepper {
                 Stepper("", value: size, in: 8...72, step: 1)
                     .labelsHidden()
+                if let defaultSize {
+                    SettingsResetButton(
+                        label: tr("Restore default font size", "恢复默认字号"),
+                        isDisabled: abs(size.wrappedValue - Double(defaultSize)) < 0.001
+                    ) {
+                        size.wrappedValue = Double(defaultSize)
+                    }
+                }
             } else {
-                Color.clear.frame(width: 16, height: 1)
+                Color.clear.frame(width: 40, height: 1)
             }
             Button(tr("Select…", "选择…"), action: select)
                 .fixedSize()

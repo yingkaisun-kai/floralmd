@@ -171,6 +171,47 @@ struct DocumentSavePolicyTests {
 
 @Suite("UntitledDocumentSavePolicy")
 struct UntitledDocumentSavePolicyTests {
+    @Test("Blank untitled content is shared across close, first-save, and capture semantics")
+    func blankContentPolicy() {
+        for source in ["", " ", "\n", " \n\t"] {
+            #expect(UntitledDocumentContentPolicy.isBlank(source))
+            #expect(UntitledDocumentContentPolicy.isDiscardableBlankUntitled(
+                hasFileURL: false,
+                rawSource: source,
+                hasMarkedText: false
+            ))
+        }
+
+        #expect(!UntitledDocumentContentPolicy.isBlank("Draft"))
+        #expect(!UntitledDocumentContentPolicy.isDiscardableBlankUntitled(
+            hasFileURL: true,
+            rawSource: "",
+            hasMarkedText: false
+        ))
+        #expect(!UntitledDocumentContentPolicy.isDiscardableBlankUntitled(
+            hasFileURL: false,
+            rawSource: "",
+            hasMarkedText: true
+        ))
+
+        #expect(UntitledDocumentContentPolicy.dirtyStateAction(
+            hasFileURL: false, rawSource: " \n", hasMarkedText: false,
+            isDocumentEdited: true
+        ) == .clearEdited)
+        #expect(UntitledDocumentContentPolicy.dirtyStateAction(
+            hasFileURL: false, rawSource: "Draft", hasMarkedText: false,
+            isDocumentEdited: false
+        ) == .markEdited)
+        #expect(UntitledDocumentContentPolicy.dirtyStateAction(
+            hasFileURL: true, rawSource: "", hasMarkedText: false,
+            isDocumentEdited: true
+        ) == .none)
+        #expect(UntitledDocumentContentPolicy.dirtyStateAction(
+            hasFileURL: false, rawSource: "", hasMarkedText: true,
+            isDocumentEdited: true
+        ) == .none)
+    }
+
     @Test("Only a nonblank synchronized untitled draft is eligible")
     func eligibility() {
         #expect(UntitledDocumentSavePolicy.isEligible(
@@ -217,6 +258,17 @@ struct UntitledDocumentSavePolicyTests {
         #expect(state.timerFired(isEligible: true) == .none)
         #expect(state.phase == .failed)
         #expect(state.inputChanged(isEligible: true) == .schedule)
+    }
+
+    @Test("Clearing a draft cancels a scheduled first save before debounce fires")
+    func clearingCancelsScheduledSave() {
+        var state = UntitledDocumentSaveState()
+
+        #expect(state.inputChanged(isEligible: true) == .schedule)
+        #expect(state.phase == .scheduled)
+        #expect(state.inputChanged(isEligible: false) == .cancel)
+        #expect(state.phase == .idle)
+        #expect(state.timerFired(isEligible: false) == .none)
     }
 
     @Test("Reservation never overwrites a same-second file")

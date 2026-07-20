@@ -104,6 +104,11 @@ swift test
 - [SwiftMath](https://github.com/mgriebling/SwiftMath)
 - [Sparkle](https://github.com/sparkle-project/Sparkle)
 
+### 关注作者
+
+想了解 FloralMD 的设计、开发过程和更多独立产品，欢迎在小红书关注
+**[凯门见山Kai](https://www.xiaohongshu.com/user/profile/67305604000000001c01b97a)**。
+
 ## English
 
 FloralMD is a native, file-first Markdown editor for macOS. It opens `.md` files
@@ -207,6 +212,12 @@ GitHub Release DMG.
 - [swift-markdown](https://github.com/swiftlang/swift-markdown)
 - [SwiftMath](https://github.com/mgriebling/SwiftMath)
 - [Sparkle](https://github.com/sparkle-project/Sparkle)
+
+### Follow the maker
+
+For FloralMD design notes, development updates, and other indie projects,
+follow **[凯门见山Kai](https://www.xiaohongshu.com/user/profile/67305604000000001c01b97a)**
+on Xiaohongshu (REDnote).
 
 ## License
 

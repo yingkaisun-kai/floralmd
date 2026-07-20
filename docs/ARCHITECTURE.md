@@ -83,6 +83,11 @@ Markdown 源码
 - `NSText.didChangeNotification` 早于 `rawSource` 与块范围同步；依赖行号或
   解析结果的界面（例如 Git gutter）必须监听
   `.editorDidSynchronizeText`，不能直接在系统文本通知中刷新。
+- 编辑器使用与 `NSTextView` 内建撤销相互独立的源码快照栈，因此
+  `NSDocument` change count 必须按自定义撤销组同步：每个新组只发送一次
+  `.changeDone`，Undo/Redo 分别发送 `.changeUndone` / `.changeRedone`，格式化、
+  缩进和输入法恢复也必须发送 `.editorDidSynchronizeText`。保存 token 会切断当前
+  输入合并组，否则保存后继续输入可能被并入保存前的撤销组而保持错误的干净状态。
 - 外部文件修改同时由 `NSFilePresenter` 和 `ExternalFileMonitor` 检测：前者
   覆盖协调写入，后者用 vnode 事件覆盖命令行工具以及“写临时文件后原子替换”
   的编辑器，并在 inode 被替换后重新挂载。未编辑文档自动调用
@@ -96,6 +101,15 @@ Markdown 源码
 
 `DecoratedTextLayoutFragment` 是 FloralMD 的主要绘制扩展点：
 
+- 原生插入点保持透明，前景短光标由显式 `NSTextInsertionIndicator` 绘制。输入法
+  marked text 尚未提交时，`rawSource` 有意不包含组合串；短光标必须用 TextKit
+  存储中的 marked range 与其内部 selection 计算位置，不能把位置截断到
+  `rawSource.count`，也不能为了刷新光标而同步或重写存储；
+- 文末光标遇到换行后的空段落时，TextKit 2 可能还没有该行 fragment。
+  此时只从前一行合成一次终端空行几何；行进距离必须额外包含用户的
+  `lineSpacing + paragraphSpacingBefore`，否则短光标会在首字符形成真实 fragment
+  时向下跳。打字机模式同时扩展文本视图底部可滚动空间，让 Return 后立即居中；
+  不得往 Markdown 存储插入占位字符。关闭打字机模式时必须清除这段临时最小高度；
 - `.blockDecoration` 绘制 Callout、引用竖线、表格边框、分隔线、代码背景和列表缩进引导线；
 - `.fragmentOverlay` 在字符位置绘制数学公式、图片、列表符号和复选框；
 - 行内公式 overlay 的 ascent 写入 `minimumLineHeight`，descent 写入段后间距；
@@ -103,10 +117,17 @@ Markdown 源码
   积分号或分式的下沉部分会与下一段重叠。列表项中的独占 `$$…$$` 保留列表段落
   缩进，只在标记所在行预留块公式高度；`$$…$$` 与正文同处一行时仍按行内流布局。
 - `.tableRowPresentation` 在非激活表格中按共享列网格独立绘制每个单元格，使所有列都能在自己的矩形内换行。
+- 短表格至少占正文列约三分之二，长表格最多占满正文列；编辑与阅读模式都使用无外框、无竖线的开放式表格，只在表头下方和相邻数据行之间绘制横向分隔线。单元格多行文本继承用户设置的正文行高。
 - 表格列宽与图片缩放宽度都在样式化时写入展示属性；窗口 resize 改变内容列宽后，
   `updateContentInset()` 必须重新样式化这些宽度敏感块。只修改
   `textContainerInset` 会让 TextKit 2 的表格行停留在不同布局世代，表现为某一行
   的整套边框与单元格一起横向错位。
+- TextKit 2 的系统插入点会包含段落 `lineSpacing`，因此高行距会把光标拉到整行框
+  高度，而且实际的 TextKit 2 路径不会调用 `NSTextView.drawInsertionPoint`。编辑器将
+  系统插入点设为透明，使用前景 `NSTextInsertionIndicator`，显式管理 first responder、
+  选择范围、字体高度与闪烁计时；不能依赖该视图的 `.automatic` 模式自行激活。文末
+  连续换行产生的终止空段落没有 TextKit 2 fragment，此时从前一空行推导位置并按有效
+  字体缩短，不能退回整行框。
 - 文档以换行符结尾时，TextKit 2 会把最终空行吸收到前一个片段；若前一个片段是
   表格末行，其绘制原点会丢失正常首行缩进。`DecoratedTextLayoutFragment` 只对
   这个末行场景补偿单元格内边距，避免文字、竖线和底线整体左移。
@@ -238,7 +259,7 @@ key code；输入源变化时会重新计算后者的显示字符和应用内冲
 面板可能落在设置窗口后方。开关先保留原状态，再在下一轮主循环把面板作为设置窗口
 的 sheet 前置显示；只有 bookmark 保存成功后才一次性提交开关状态，取消则保持原值。
 
-文档保存可选择自动或仅手动模式；自动模式默认每 2 秒保存一次，也可选择 1、5、10 或 30 秒，手动模式保留 `⌘S` 与关闭确认。未命名文档的首次自动落盘是另一项默认关闭的设置：用户选择目标文件夹后，`Document` 只从 `.editorDidSynchronizeText` 接收已同步的非空白正文，确认没有 marked text，并按同一保存间隔 debounce；到期后以可读时间戳命名，用 `O_EXCL` 原子占位避免覆盖，再通过标准 `NSDocument` `.saveAsOperation` 获得首个 `fileURL`。目标目录以 security-scoped bookmark 数据持久化并由单一访问边界解析，为未来 App Sandbox 保留迁移路径；失败会保留内存正文并停止，只有再次编辑或设置变化才重试。首次落盘成功后的周期保存仍完全由前一项设置决定。
+文档保存可选择自动或仅手动模式；自动模式默认每 2 秒保存一次，也可选择 1、5、10 或 30 秒，手动模式保留 `⌘S` 与关闭确认。未命名文档的首次自动落盘是另一项默认关闭的设置：用户选择目标文件夹后，`Document` 只从 `.editorDidSynchronizeText` 接收已同步的非空白正文，确认没有 marked text，并按同一保存间隔 debounce；到期后以可读时间戳命名，用 `O_EXCL` 原子占位避免覆盖，再通过标准 `NSDocument` `.saveAsOperation` 获得首个 `fileURL`。目标目录以 security-scoped bookmark 数据持久化并由单一访问边界解析，为未来 App Sandbox 保留迁移路径；失败会保留内存正文并停止，只有再次编辑或设置变化才重试。首次落盘成功后的周期保存仍完全由前一项设置决定。自动落盘、Quick Capture 复用、窗口脏状态与关闭审查共享 `UntitledDocumentContentPolicy`：仅当 `fileURL == nil`、没有 marked text 且正文 trim 空格与换行后为空时，文档才是可直接丢弃的空白未命名稿；已有文件即使被清空也始终保留普通文件语义。关闭窗口或 `⌘Q` 开始时先提交仍在进行的 marked text，再同步这一状态；清空会取消尚未触发的首次落盘，Undo 恢复非空正文则重新标脏并重新安排 debounce。
 
 `Document.autosavesInPlace` 只声明文档支持原地自动保存；`AppSettings.applyDocumentSaving()` 还必须把 `NSDocumentController.autosavingDelay` 设为正数才能真正启动周期性保存，值为 `0` 表示禁用。窗口副标题以 `NSDocument` 的脏状态与保存回调为准，显示未保存、正在保存、已保存或保存失败；保存成功后还会核对磁盘正文与当前 `rawSource`，只有完全一致才修复残留脏状态。自动模式关闭有待保存变化的文件时会先完成一次不可取消的原地保存，等 change-token 落定后再次核对磁盘，再进入系统关闭流程。周期自动保存虽然已经更新原文件，AppKit 仍可能保留“未显式保存”的内部关闭基线；因此 `canClose` 只有在再次确认磁盘与当前 `rawSource` 完全一致时才直接完成公开的 `shouldClose` 回调。`⌘Q` 则由 `DocumentController.reviewUnsavedDocuments` 在系统弹窗之前顺序刷新全部已命名文档。AppKit 会在调用该方法前缓存“需要审查”的判断，所以全部保存成功并再次确认没有脏文稿后，控制器直接完成其公开的 `didReviewAll` 回调；若再调用 `super`，系统会沿用旧判断并错误显示 Save/Revert 弹窗。
 

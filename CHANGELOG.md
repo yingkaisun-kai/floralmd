@@ -11,6 +11,36 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.7.7] — 2026-07-20
+
+### 中文
+
+#### 新增
+- 数字设置项现在可以单独恢复默认值。
+
+#### 修复
+- 修复表格宽度不随正文列宽继续扩展、开放式边框不一致、单元格多行文字过挤，
+  以及阅读模式默认表头未左对齐的问题。
+- 修复未命名文档在输入后清空时仍被视为未保存修改，并在关闭窗口或退出应用时
+  错误询问是否保存的问题。
+- 修复高行距下光标高度异常、文末空行位置延迟跳动，以及中文输入法组合期间
+  光标没有跟随拼音输入位置的问题。
+
+### English
+
+#### Added
+- Numeric settings can now be restored to their defaults individually.
+
+#### Fixed
+- Fixed tables stopping short of the reading-column width, inconsistent open
+  borders, cramped multiline cells, and default table headers not being
+  left-aligned in Read mode.
+- Fixed cleared untitled documents remaining marked as unsaved and prompting
+  to save when closing the window or quitting the app.
+- Fixed oversized carets with custom line spacing, terminal empty-line carets
+  jumping only after typing, and the caret not following the active position
+  during Chinese input-method composition.
+
 ## [2026.7.6] — 2026-07-18
 
 ### 中文

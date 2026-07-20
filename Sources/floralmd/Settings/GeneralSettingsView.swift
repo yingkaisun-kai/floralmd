@@ -16,7 +16,8 @@ struct GeneralSettingsView: View {
     @AppStorage(AppSettings.Key.reopenWindows) private var reopenWindows = false
     @AppStorage(AppSettings.Key.startupAction) private var startupAction = AppSettings.StartupAction.createNewDocument
     @AppStorage(AppSettings.Key.autoSaveWithVersions) private var autoSave = true
-    @AppStorage(AppSettings.Key.autoSaveInterval) private var autoSaveInterval = 2.0
+    @AppStorage(AppSettings.Key.autoSaveInterval)
+    private var autoSaveInterval = DocumentAutoSaveInterval.defaultValue.rawValue
     @AppStorage(AppSettings.Key.autoSaveUntitledDocuments) private var autoSaveUntitled = false
     @AppStorage(AppSettings.Key.quickCaptureEnabled) private var quickCaptureEnabled = false
     @AppStorage(AppSettings.Key.conflictResolution) private var conflict = AppSettings.ConflictResolution.ask
@@ -79,13 +80,21 @@ struct GeneralSettingsView: View {
                     }
 
                     LabeledContent(tr("Auto-save interval", "自动保存间隔")) {
-                        Picker("", selection: $autoSaveInterval) {
-                            ForEach(DocumentAutoSaveInterval.allCases) { interval in
-                                Text(intervalLabel(interval)).tag(interval.rawValue)
+                        HStack(spacing: 8) {
+                            Picker("", selection: $autoSaveInterval) {
+                                ForEach(DocumentAutoSaveInterval.allCases) { interval in
+                                    Text(intervalLabel(interval)).tag(interval.rawValue)
+                                }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            SettingsResetButton(
+                                label: tr("Restore default interval", "恢复默认间隔"),
+                                isDisabled: autoSaveInterval == DocumentAutoSaveInterval.defaultValue.rawValue
+                            ) {
+                                autoSaveInterval = DocumentAutoSaveInterval.defaultValue.rawValue
                             }
                         }
-                        .labelsHidden()
-                        .fixedSize()
                     }
                     .padding(.leading, 20)
                     .disabled(!autoSave && !autoSaveUntitled)

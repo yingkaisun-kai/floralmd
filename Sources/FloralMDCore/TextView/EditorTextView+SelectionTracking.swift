@@ -7,6 +7,7 @@ extension EditorTextView {
 
     @objc func selectionDidChange(_ notification: Notification) {
         traceEdit("selectionDidChange")
+        scheduleFontHeightInsertionIndicatorUpdate()
         // A selection change landing mid-recompose is the drift signature
         // (issue #156); the stack names the AppKit path that moved the caret.
         if isUpdating { traceSelectionOrigin() }

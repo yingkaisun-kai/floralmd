@@ -27,8 +27,8 @@ extension EditorTextView {
             }
         } else {
             // Non-active: bold header, hidden pipes, column-width alignment
-            // via kern, drawn vertical + horizontal borders via TableRowTextBlock,
-            // with cell padding for breathing room.
+            // via kern, open-table horizontal rules via TableRowTextBlock, with
+            // cell padding for breathing room.
             let tableNS = (result.string as NSString)
             let tableStr = tableNS.substring(with: span.fullRange)
             let lines = tableStr.components(separatedBy: "\n")
@@ -85,23 +85,18 @@ extension EditorTextView {
             for ci in 0..<numCols {
                 colWidths[ci] += 2 * cellHPad
             }
+            let tableMaximumWidth = max(1, availableContentWidth - cellHPad)
             colWidths = fittedTableColumnWidths(
                 colWidths,
-                maximumWidth: max(1, availableContentWidth - cellHPad),
-                minimumWidth: bodyFont.pointSize * 5
+                maximumWidth: tableMaximumWidth,
+                minimumWidth: bodyFont.pointSize * 5,
+                minimumTableWidth: tableMaximumWidth * 2 / 3
             )
 
-            // Column-border X offsets (between columns) and total width.
-            // Each border is drawn cellHPad before the column boundary
-            // so the 2*cellHPad per column splits evenly: hPad of right
-            // padding for the current cell, hPad of left padding for the next.
-            var borderXOffsets: [CGFloat] = []
-            var cumX: CGFloat = 0
-            for ci in 0..<numCols {
-                cumX += colWidths[ci]
-                if ci < numCols - 1 { borderXOffsets.append(cumX - cellHPad) }
+            let totalWidth = colWidths.reduce(0, +)
+            let lastDataRowIndex = rowCells.indices.last {
+                $0 > 1 && !rowCells[$0].isEmpty
             }
-            let totalWidth = cumX
 
             // Per-column alignment from the separator row (`:--`/`:-:`/`--:`).
             let aligns = tableColumnAlignments(separatorRow: lines.count > 1 ? lines[1] : "",
@@ -136,7 +131,12 @@ extension EditorTextView {
                             ? rowCells[i][ci].styled
                             : NSAttributedString(string: "", attributes: baseAttributes)
                         let cell = NSMutableAttributedString(attributedString: source)
-                        let cellParagraph = NSMutableParagraphStyle()
+                        let cellParagraph = bodyParagraphStyle.mutableCopy()
+                            as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+                        // A cell participates in the user's line-height choice,
+                        // but paragraph-to-paragraph spacing remains row-owned.
+                        cellParagraph.paragraphSpacingBefore = 0
+                        cellParagraph.paragraphSpacing = 0
                         let contentWidth = max(1, colWidths[ci] - 2 * cellHPad)
                         cellParagraph.lineBreakMode = tableCellNeedsCharacterWrapping(
                             cell, contentWidth: contentWidth
@@ -178,11 +178,10 @@ extension EditorTextView {
                 result.addAttribute(.paragraphStyle, value: ps, range: lineRange)
                 result.addAttribute(
                     .blockDecoration,
-                    value: BlockDecoration(.tableRow(columnXOffsets: borderXOffsets,
-                                                     width: totalWidth,
+                    value: BlockDecoration(.tableRow(width: totalWidth,
                                                      leftInset: cellHPad,
-                                                                      separator: i == 1,
-                                                                      bottomBorder: i > 1)),
+                                                     separator: i == 1,
+                                                     bottomBorder: i > 1 && i < (lastDataRowIndex ?? i))),
                     range: lineRange)
 
                 if i == 1 {

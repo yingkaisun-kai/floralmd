@@ -121,7 +121,7 @@ extension EditorTextView {
         // remaining siblings lost a member — both need renumbering.
         renumberOrderedListRunsIfNeeded(touching: startBlock..<(endBlock + 1),
                                         depthChanged: Set(startBlock...endBlock))
-        document?.updateChangeCount(.changeDone)
+        publishSynchronizedTextChange(.changeDone)
     }
 
     /// Blocks to restyle for an indent/dedent: the directly-edited span, plus —
@@ -219,6 +219,6 @@ extension EditorTextView {
         // old depth's remaining siblings lost a member — both need renumbering.
         renumberOrderedListRunsIfNeeded(touching: startBlock..<(endBlock + 1),
                                         depthChanged: Set(startBlock...endBlock))
-        document?.updateChangeCount(.changeDone)
+        publishSynchronizedTextChange(.changeDone)
     }
 }

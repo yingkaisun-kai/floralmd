@@ -309,10 +309,11 @@ struct AppearanceIntegrationTests {
         #expect(editor.backgroundColor == NSColor.textBackgroundColor)
     }
 
-    @Test("Insertion point uses the accent color")
+    @Test("Font-height insertion point uses the accent color")
     @MainActor func insertionPoint() {
         let editor = makeEditor()
-        #expect(editor.insertionPointColor == editor.accentColor)
+        #expect(editor.insertionPointColor == .clear)
+        #expect(editor.fontHeightInsertionIndicator.color == editor.accentColor)
     }
 
     @Test("Body text uses textColor")

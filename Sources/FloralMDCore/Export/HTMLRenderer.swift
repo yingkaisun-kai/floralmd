@@ -336,7 +336,9 @@ struct HTMLRenderer: MarkupVisitor {
     mutating func visitTable(_ table: Table) -> String {
         let aligns = table.columnAlignments
         func cellStyle(_ col: Int) -> String {
-            guard col < aligns.count, let a = aligns[col] else { return "" }
+            guard col < aligns.count, let a = aligns[col] else {
+                return " style=\"text-align:left\""
+            }
             switch a {
             case .left:   return " style=\"text-align:left\""
             case .center: return " style=\"text-align:center\""

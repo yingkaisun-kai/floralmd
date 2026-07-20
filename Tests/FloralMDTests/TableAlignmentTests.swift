@@ -50,11 +50,16 @@ struct TableAlignmentParseTests {
         #expect(widths.reduce(0, +) <= 900.5)
     }
 
-    @Test("Short tables keep their natural column widths")
-    func shortTableKeepsNaturalWidths() {
-        #expect(fittedTableColumnWidths(
-            [120, 80, 60], maximumWidth: 900, minimumWidth: 70
-        ) == [120, 80, 60])
+    @Test("Short tables expand to the requested minimum table width")
+    func shortTableUsesMinimumWidth() {
+        let widths = fittedTableColumnWidths(
+            [120, 80, 60], maximumWidth: 900, minimumWidth: 70,
+            minimumTableWidth: 600
+        )
+        #expect(abs(widths.reduce(0, +) - 600) < 0.5)
+        #expect(widths[0] > 120)
+        #expect(widths[1] > 80)
+        #expect(widths[2] > 60)
     }
 
     @Test("Only an unbroken run wider than its cell needs character wrapping")
@@ -155,8 +160,8 @@ struct TableAlignmentRenderTests {
         #expect(abs(markedWidth - plainWidth) < twoChars)
     }
 
-    @Test("Every data row carries a horizontal bottom border")
-    func dataRowBottomBorders() {
+    @Test("Open tables draw only internal horizontal rules")
+    func internalHorizontalRules() {
         let editor = makeEditor()
         let styled = editor.styleBlock(
             "| A | B |\n| --- | --- |\n| one | two |\n| three | four |",
@@ -171,12 +176,12 @@ struct TableAlignmentRenderTests {
         let borders = rowStarts.compactMap { offset -> Bool? in
             guard let decoration = styled.attribute(.blockDecoration, at: offset,
                                                     effectiveRange: nil) as? BlockDecoration,
-                  case .tableRow(_, _, _, _, let bottomBorder) = decoration.kind else {
+                  case .tableRow(_, _, _, let bottomBorder) = decoration.kind else {
                 return nil
             }
             return bottomBorder
         }
-        #expect(borders == [false, false, true, true])
+        #expect(borders == [false, false, true, false])
     }
 
     @Test("Long cells in every column wrap independently on one shared grid")
@@ -204,13 +209,48 @@ struct TableAlignmentRenderTests {
             #expect(bounds.height > editor.bodyFont.ascender - editor.bodyFont.descender)
         }
 
-        guard let decoration = styled.attribute(.blockDecoration, at: 0,
+    }
+
+    @Test("A trailing newline does not add a bottom rule")
+    func trailingNewlineHasNoBottomRule() {
+        let editor = makeEditor()
+        let styled = editor.styleBlock(
+            "| A | B |\n| --- | --- |\n| one | two |\n| three | four |\n",
+            cursorPosition: nil
+        )
+        let lastRow = (styled.string as NSString).range(of: "| three").location
+        guard let decoration = styled.attribute(.blockDecoration, at: lastRow,
                                                  effectiveRange: nil) as? BlockDecoration,
-              case .tableRow(let offsets, _, _, _, _) = decoration.kind else {
-            Issue.record("expected the original table-row border decoration")
+              case .tableRow(_, _, _, let bottomBorder) = decoration.kind else {
+            Issue.record("expected a table-row decoration")
             return
         }
-        #expect(offsets.count == 1)
+        #expect(!bottomBorder)
+    }
+
+    @Test("Multiline cells inherit the user's line spacing")
+    func cellLineSpacing() {
+        var theme = EditorTheme.default
+        theme.lineSpacing = 12
+        let editor = makeEditor()
+        editor.applyTheme(theme, persist: false)
+        editor.frame.size.width = 360
+        editor.textContainer?.size.width = 360
+        let styled = editor.styleBlock(
+            "| First | Second |\n| --- | --- |\n| This cell contains enough ordinary words to wrap | short |",
+            cursorPosition: nil
+        )
+        let start = lastRowStart(styled)
+        guard let row = presentation(at: start, in: styled),
+              let paragraph = row.cells[0].attribute(
+                .paragraphStyle, at: 0, effectiveRange: nil
+              ) as? NSParagraphStyle else {
+            Issue.record("expected a rendered cell paragraph style")
+            return
+        }
+        #expect(paragraph.lineSpacing == 12)
+        #expect(paragraph.paragraphSpacingBefore == 0)
+        #expect(paragraph.paragraphSpacing == 0)
     }
 
     @Test("Compact resize relays out every table row on one shared origin")
@@ -251,7 +291,7 @@ struct TableAlignmentRenderTests {
         }
     }
 
-    @Test("A trailing newline keeps the final row on the shared grid",
+    @Test("Open-table styling has no vertical rules with a trailing newline",
           .enabled(if: ProcessInfo.processInfo.environment["CI"] == nil))
     func trailingNewlineKeepsFinalRowAligned() {
         let editor = makeEditor()
@@ -314,11 +354,8 @@ struct TableAlignmentRenderTests {
             }
             if score > 150 { strongVerticalRules.append(x) }
         }
-        #expect(strongVerticalRules.count == 2,
-                "expected two continuous shared-grid dividers, got \(strongVerticalRules)")
-        if strongVerticalRules.count == 2 {
-            #expect(strongVerticalRules[1] - strongVerticalRules[0] > 100)
-        }
+        #expect(strongVerticalRules.isEmpty,
+                "expected no vertical table rules, got \(strongVerticalRules)")
     }
 
 }

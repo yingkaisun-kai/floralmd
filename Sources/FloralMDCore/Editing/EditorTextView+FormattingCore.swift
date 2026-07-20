@@ -62,7 +62,7 @@ extension EditorTextView {
                                cursorInRaw: sel.location,
                                selectionInRaw: sel.length > 0 ? sel : nil)
         }
-        document?.updateChangeCount(.changeDone)
+        publishSynchronizedTextChange(.changeDone)
     }
 
     /// Replace the whole document as one undoable step (for non-contiguous edits
@@ -82,7 +82,7 @@ extension EditorTextView {
         let loc = min(select.location, len)
         let sel = NSRange(location: loc, length: min(select.length, len - loc))
         recompose(cursorInRaw: sel.location, selectionInRaw: sel.length > 0 ? sel : nil)
-        document?.updateChangeCount(.changeDone)
+        publishSynchronizedTextChange(.changeDone)
     }
 
     // MARK: - Line-range helpers

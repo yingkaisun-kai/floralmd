@@ -34,7 +34,10 @@ extension EditorTextView {
         }
         if let replacement = replacementString {
             if !isUndoRedoing {
-                recordUndoIfNeeded(editRange: affectedCharRange, replacement: replacement)
+                pendingDocumentChangeGroupStart = recordUndoIfNeeded(
+                    editRange: affectedCharRange,
+                    replacement: replacement
+                ) || pendingDocumentChangeGroupStart
             }
         }
         traceEdit("shouldChangeText OK range=\(affectedCharRange) repl=\(logSnippet(replacementString))")
@@ -100,9 +103,9 @@ extension EditorTextView {
                     self.setSelectedRange(NSRange(location: min(caret, storage.length),
                                                   length: 0))
                 }
-                self.document?.updateChangeCount(.changeDone)
-                NotificationCenter.default.post(name: .editorDidSynchronizeText,
-                                                object: self)
+                self.publishSynchronizedTextChange(
+                    self.consumePendingDocumentChangeGroupStart() ? .changeDone : nil
+                )
             }
         }
     }
@@ -123,13 +126,32 @@ extension EditorTextView {
             return
         }
         syncRawSourceFromDisplay()
-        document?.updateChangeCount(.changeDone)
+        publishSynchronizedTextChange(
+            consumePendingDocumentChangeGroupStart() ? .changeDone : nil
+        )
+        scrollCursorToCenter()
+        scheduleFontHeightInsertionIndicatorUpdate()
+    }
+
+    /// Publish only after `rawSource`, storage, and blocks agree. The optional
+    /// change kind keeps NSDocument's saved baseline aligned with the custom
+    /// undo stack; the notification also drives untitled autosave and document
+    /// presentation for programmatic edit paths such as Undo and formatting.
+    func publishSynchronizedTextChange(_ change: NSDocument.ChangeType?) {
+        if let change {
+            document?.updateChangeCount(change)
+        }
         // super.didChangeText() posts NSText.didChangeNotification before
         // rawSource and block ranges catch up with storage. Line-based
         // presentation must wait for this synchronized notification.
         NotificationCenter.default.post(name: .editorDidSynchronizeText,
                                         object: self)
-        scrollCursorToCenter()
+    }
+
+    func consumePendingDocumentChangeGroupStart() -> Bool {
+        let pending = pendingDocumentChangeGroupStart
+        pendingDocumentChangeGroupStart = false
+        return pending
     }
 
     /// Syncs rawSource from the text storage, re-parses blocks, and restyles
