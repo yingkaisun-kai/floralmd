@@ -244,6 +244,9 @@ ID、分类和当前快捷键搜索。普通菜单快捷键保存字符语义，
 key code；输入源变化时会重新计算后者的显示字符和应用内冲突。旧版
 `settings.general.quickCaptureKeyCode` / `Modifiers` / `KeyLabel` 在
 `settings.shortcuts.schemaVersion` 首次升级时迁入统一覆盖表。
+快捷键页在输入源或覆盖变化时只递增展示刷新版本，保持整页及其搜索框、录制按钮的
+SwiftUI 身份稳定；不能用 `.id(...)` 重建整个页面，否则 macOS 为文本框切换输入源
+时会同步销毁 first responder，并中断搜索或正在进行的快捷键录制。
 
 `⌘⇧P` 打开的命令面板从同一命令目录读取名称、分类和当前快捷键，并通过
 `CommandDispatcher` 将稳定 ID 映射到 AppKit responder chain；没有当前文档时，

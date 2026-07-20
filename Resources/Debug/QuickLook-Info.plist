@@ -20,6 +20,27 @@
     <string>0.0.0</string>
     <key>CFBundleVersion</key>
     <string>0</string>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>net.daringfireball.markdown</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.utf8-plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>md</string>
+                    <string>markdown</string>
+                    <string>mdown</string>
+                    <string>mkd</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionAttributes</key>
@@ -31,7 +52,6 @@
             <key>QLSupportedContentTypes</key>
             <array>
                 <string>net.daringfireball.markdown</string>
-                <string>public.markdown</string>
             </array>
         </dict>
         <key>NSExtensionPointIdentifier</key>

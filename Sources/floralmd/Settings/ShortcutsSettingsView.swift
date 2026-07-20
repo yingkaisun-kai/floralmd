@@ -5,16 +5,17 @@ import SwiftUI
 struct ShortcutsSettingsView: View {
     @AppStorage(AppSettings.Key.interfaceLanguage) private var language = AppLanguage.system
     @AppStorage(AppSettings.Key.showFixedShortcuts) private var showFixedShortcuts = false
-    @State private var searchText = ""
+    // Refresh presentation in place: replacing this page's identity would destroy the
+    // search field or recorder when an input-source change arrives during interaction.
+    @State private var state = ShortcutSettingsState()
     @State private var conflictMessage: String?
-    @State private var refreshToken = UUID()
 
     private func tr(_ en: String, _ zh: String) -> String {
         AppCopy.text(en, zh, language: language)
     }
 
     private var visibleDefinitions: [ShortcutCommandDefinition] {
-        let query = normalized(searchText)
+        let query = normalized(state.searchText)
         let tokens = query.split(whereSeparator: \.isWhitespace).map(String.init)
         return ShortcutCatalog.definitions.filter { definition in
             guard showFixedShortcuts || definition.isCustomizable else { return false }
@@ -41,6 +42,7 @@ struct ShortcutsSettingsView: View {
     }
 
     var body: some View {
+        let _ = state.presentationRevision
         SettingsPage(
             title: tr("Shortcuts", "快捷键"),
             subtitle: tr(
@@ -56,7 +58,7 @@ struct ShortcutsSettingsView: View {
                 .settingsSupportingText()
 
                 HStack(spacing: 12) {
-                    TextField(tr("Search shortcuts", "搜索快捷键"), text: $searchText)
+                    TextField(tr("Search shortcuts", "搜索快捷键"), text: $state.searchText)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel(tr("Search shortcuts", "搜索快捷键"))
                     Toggle(
@@ -102,16 +104,15 @@ struct ShortcutsSettingsView: View {
                 Button(tr("Restore All Defaults", "全部恢复默认")) {
                     conflictMessage = nil
                     ShortcutManager.restoreAllDefaults()
-                    refreshToken = UUID()
+                    state.refreshPresentation()
                 }
             }
         }
-        .id(refreshToken)
         .onReceive(NotificationCenter.default.publisher(for: .shortcutSettingsDidChange)) { _ in
-            refreshToken = UUID()
+            state.refreshPresentation()
         }
         .onReceive(NotificationCenter.default.publisher(for: .keyboardInputSourceDidChange)) { _ in
-            refreshToken = UUID()
+            state.refreshPresentation()
         }
     }
 
@@ -156,7 +157,7 @@ struct ShortcutsSettingsView: View {
                 Button {
                     conflictMessage = nil
                     ShortcutManager.restoreDefault(for: definition.id)
-                    refreshToken = UUID()
+                    state.refreshPresentation()
                 } label: {
                     Image(systemName: "arrow.counterclockwise")
                 }
@@ -195,7 +196,7 @@ struct ShortcutsSettingsView: View {
                 "\(ShortcutManager.displayName(for: proposed)) 已分配给\(owner.chineseTitle)。"
             )
             NSSound.beep()
-            refreshToken = UUID()
+            state.refreshPresentation()
             return
         }
         if definition.defaultShortcut?.scope == .global,
@@ -207,11 +208,11 @@ struct ShortcutsSettingsView: View {
                 "VoiceOver 运行时，Control–Option 组合会与其操作键冲突。"
             )
             NSSound.beep()
-            refreshToken = UUID()
+            state.refreshPresentation()
             return
         }
         ShortcutManager.apply(proposed, to: definition.id)
-        refreshToken = UUID()
+        state.refreshPresentation()
     }
 
     private func commandTitle(_ definition: ShortcutCommandDefinition) -> String {

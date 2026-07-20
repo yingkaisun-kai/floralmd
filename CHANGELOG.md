@@ -11,6 +11,24 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.7.8] — 2026-07-20
+
+### 中文
+
+#### 修复
+- 修复快捷键设置的搜索框在切换键盘输入源时立即失去焦点，导致无法输入或筛选
+  命令的问题。
+- 修复 macOS 15 下 Markdown 文件无法通过 Finder Quick Look 预览的问题；由
+  @GinterFu 通过 PR #5 贡献。
+
+### English
+
+#### Fixed
+- Fixed the Shortcuts search field losing focus when the keyboard input source
+  changed, preventing typing and command filtering.
+- Fixed Markdown files not appearing in Finder Quick Look on macOS 15.
+  Contributed by @GinterFu in PR #5.
+
 ## [2026.7.7] — 2026-07-20
 
 ### 中文

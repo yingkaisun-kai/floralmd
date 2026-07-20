@@ -106,4 +106,14 @@ struct ShortcutCatalogTests {
         )
         #expect(ShortcutCatalog.byID["window.compact"]?.defaultShortcut == nil)
     }
+
+    @Test("Presentation refresh preserves the active shortcut search")
+    func presentationRefreshPreservesSearch() {
+        var state = ShortcutSettingsState(searchText: "bold")
+
+        state.refreshPresentation()
+
+        #expect(state.presentationRevision == 1)
+        #expect(state.searchText == "bold")
+    }
 }
