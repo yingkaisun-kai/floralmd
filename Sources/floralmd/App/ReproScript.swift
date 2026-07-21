@@ -12,6 +12,7 @@ import FloralMDCore
 ///   sleep <ms>        wait before the next command
 ///   new               create and target a fresh Untitled document
 ///   caret <needle>    place the caret before the first occurrence of <needle>
+///   wiki <target>     follow a wikilink target through live navigation
 ///   type <text>       type text, one key event per character
 ///   backspace <n>     press delete n times (300ms apart)
 ///   space <n>         insert n literal spaces
@@ -58,6 +59,12 @@ enum ReproScript {
                         return
                     }
                     editor.setSelectedRange(NSRange(location: r.location, length: 0))
+                }
+            case "wiki":
+                schedule(after: delay) { editor in
+                    editor.followWikiLink(arg)
+                    Log.info("repro wiki target=\(arg) sel=\(editor.selectedRange())",
+                             category: .app)
                 }
             case "caretoff":
                 // Absolute-offset caret move (arrow-key-like: fromMouse=false).

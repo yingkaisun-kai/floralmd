@@ -61,6 +61,24 @@ struct WikiLinkTests {
         #expect(st.string == "[[Note]]")
     }
 
+    @Test("Edit mode identifies visible link text as navigable")
+    func editLinkCursorTargets() {
+        let editor = makeEditor()
+        let source = "[regular](#Target) and [[#Target|wiki]] and plain"
+        editor.loadContent(source)
+
+        let ns = source as NSString
+        let regular = ns.range(of: "regular")
+        let wiki = ns.range(of: "wiki")
+        let plain = ns.range(of: "plain")
+        #expect(editor.hasNavigableLink(atCharacterIndex: regular.location))
+        #expect(editor.hasNavigableLink(atCharacterIndex: wiki.location))
+        #expect(!editor.hasNavigableLink(atCharacterIndex: regular.location - 1))
+        #expect(!editor.hasNavigableLink(atCharacterIndex: plain.location))
+        #expect(!editor.hasNavigableLink(atCharacterIndex: -1))
+        #expect(!editor.hasNavigableLink(atCharacterIndex: ns.length))
+    }
+
     @Test("Wikilink content is opaque: inner markdown is not parsed")
     func opaque() {
         let spans = SyntaxHighlighter.parse("[[a **b** c]]")

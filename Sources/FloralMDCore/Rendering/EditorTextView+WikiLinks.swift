@@ -23,6 +23,15 @@ extension EditorTextView {
 
     // MARK: Hit testing
 
+    /// Whether a laid-out source character is visible link text. Edit mode
+    /// keeps custom attributes instead of AppKit's `.link`, so NSTextView does
+    /// not provide its usual pointing-hand cursor for us.
+    func hasNavigableLink(atCharacterIndex index: Int) -> Bool {
+        guard let storage = textStorage, index >= 0, index < storage.length else { return false }
+        return storage.attribute(.editorWikiTarget, at: index, effectiveRange: nil) != nil
+            || storage.attribute(.editorLinkURL, at: index, effectiveRange: nil) != nil
+    }
+
     /// The wikilink target under a mouse event, or nil if the click doesn't land
     /// on wikilink display text.
     func wikiTarget(at event: NSEvent) -> String? {
@@ -36,7 +45,7 @@ extension EditorTextView {
     public func followWikiLink(_ target: String) {
         let (path, heading) = Self.splitHeading(target)
         if path.isEmpty {
-            if let heading { scrollToHeading(heading) } else { NSSound.beep() }
+            if let heading { scrollToWikiAnchor(heading) } else { NSSound.beep() }
             return
         }
         openLinkedFile(path: path, heading: heading)
@@ -57,7 +66,7 @@ extension EditorTextView {
         let path = rawPath.removingPercentEncoding ?? rawPath
         let heading = rawHeading.map { $0.removingPercentEncoding ?? $0 }
         if path.isEmpty {
-            if let heading { scrollToHeading(heading) } else { NSSound.beep() }
+            if let heading { scrollToWikiAnchor(heading) } else { NSSound.beep() }
             return
         }
         openLinkedFile(path: path, heading: heading)
@@ -84,16 +93,60 @@ extension EditorTextView {
     /// Scrolls to the first heading block whose text matches `heading`
     /// (case-insensitive). Beeps if there is no such heading.
     public func scrollToHeading(_ heading: String) {
-        let want = heading.lowercased()
-        for block in blocks {
-            guard case .heading = block.kind,
-                  Self.headingText(block.content).lowercased() == want else { continue }
-            let loc = block.range.location
-            setSelectedRange(NSRange(location: loc, length: 0))
-            scrollRangeToVisible(NSRange(location: loc, length: 0))
+        guard let location = sourceLocation(forWikiAnchor: heading, blockIDs: false) else {
+            NSSound.beep()
             return
         }
-        NSSound.beep()
+        navigateToSourceLocation(location)
+    }
+
+    /// Navigates a wikilink fragment: `heading` selects a heading while
+    /// `^block-id` selects the block carrying that trailing metadata token.
+    public func scrollToWikiAnchor(_ anchor: String) {
+        guard let location = sourceLocation(forWikiAnchor: anchor, blockIDs: true) else {
+            NSSound.beep()
+            return
+        }
+        navigateToSourceLocation(location)
+    }
+
+    /// Original source line for a page-local wikilink target, used by Read
+    /// mode to scroll its own web surface instead of the hidden editor.
+    public func sourceLine(forPageLocalWikiTarget target: String) -> Int? {
+        let (path, anchor) = Self.splitHeading(target)
+        guard path.isEmpty, let anchor,
+              let location = sourceLocation(forWikiAnchor: anchor, blockIDs: true) else { return nil }
+        let prefix = (rawSource as NSString).substring(to: location)
+        return prefix.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+    }
+
+    private func navigateToSourceLocation(_ location: Int) {
+        let target = NSRange(location: location, length: 0)
+        setSelectedRange(target)
+        scrollRangeToVisible(target)
+    }
+
+    private func sourceLocation(forWikiAnchor anchor: String, blockIDs: Bool) -> Int? {
+        if blockIDs, anchor.hasPrefix("^") {
+            guard markdownFeatures.contains(.blockID) else { return nil }
+            let wanted = String(anchor.dropFirst()).lowercased()
+            for block in blocks {
+                let spans = SyntaxHighlighter.parse(block.content, features: markdownFeatures)
+                if spans.contains(where: {
+                    if case .blockID(let id) = $0.kind { return id.lowercased() == wanted }
+                    return false
+                }) {
+                    return block.range.location
+                }
+            }
+            return nil
+        }
+
+        let want = anchor.lowercased()
+        return blocks.first(where: {
+            guard case .heading = $0.kind else { return false }
+            return Self.headingText($0.content).lowercased() == want
+        })?.range.location
     }
 
     /// Visible heading text for either ATX (`# Title`) or setext

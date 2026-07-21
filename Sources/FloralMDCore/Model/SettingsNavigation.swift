@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 /// Stable Settings navigation identities and window layout bounds.
 ///
 /// The app shell owns presentation and localization; this model only keeps the
@@ -5,6 +6,7 @@
 public enum SettingsPaneID: String, CaseIterable, Sendable {
     case general
     case editor
+    case markdown
     case shortcuts
     case appearance
     case advanced

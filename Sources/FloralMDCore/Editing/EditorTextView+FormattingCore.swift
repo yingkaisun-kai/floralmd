@@ -39,7 +39,7 @@ extension EditorTextView {
         rawSource = ns.replacingCharacters(in: clamped, with: replacement)
         rebuildListIndentState()
         rebuildLinkDefState()
-        blocks = BlockParser.parse(rawSource, previous: blocks)
+        blocks = BlockParser.parse(rawSource, previous: blocks, features: markdownFeatures)
 
         // The replaced region grew/shrank by `delta`; the new block-aligned span
         // is the old span plus that delta. Its text is the storage replacement.
@@ -76,7 +76,7 @@ extension EditorTextView {
         rawSource = newRawSource
         rebuildListIndentState()
         rebuildLinkDefState()
-        blocks = BlockParser.parse(rawSource, previous: blocks)
+        blocks = BlockParser.parse(rawSource, previous: blocks, features: markdownFeatures)
 
         let len = (rawSource as NSString).length
         let loc = min(select.location, len)

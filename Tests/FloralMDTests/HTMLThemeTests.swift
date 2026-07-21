@@ -102,7 +102,14 @@ struct HTMLThemeTests {
     func codeTokenColors() {
         let light = css(dark: false)
         #expect(light.contains("pre code .tok-keyword { color: \(CodeSyntaxPalette.hex(.keyword, dark: false)); }"))
+        #expect(light.contains("pre code .tok-command { color: \(CodeSyntaxPalette.hex(.command, dark: false)); }"))
+        #expect(light.contains("pre code .tok-value { color: \(CodeSyntaxPalette.hex(.value, dark: false)); }"))
         #expect(light.contains("pre code { color: \(CodeSyntaxPalette.hex(nil, dark: false)); }"))
+        #expect(light.contains(".code-block-wrap.has-controls pre { padding-top: 44px; }"))
+        #expect(light.contains(".code-block-controls {"))
+        #expect(light.contains("max-width: calc(100% - 16px); min-width: 0;"))
+        #expect(light.contains("overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"))
+        #expect(light.contains(".code-language-label {"))
         let dark = css(dark: true)
         #expect(dark.contains("pre code .tok-string { color: \(CodeSyntaxPalette.hex(.string, dark: true)); }"))
         // The palettes differ between appearances.

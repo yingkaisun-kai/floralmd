@@ -20,10 +20,28 @@ import AppKit
 // loads: App Transport Security refuses the insecure connection outright,
 // regardless of the setting (same reasoning as Read mode's DocumentHTML).
 
-// Loaded images are cached by resolved absolute path (local) or URL string
-// (remote), so a recompose doesn't re-read/re-fetch them. NSCache is
-// internally thread-safe.
+// Local images are cached by resolved absolute path so a recompose normally
+// doesn't re-read them. Eviction is safe because the file can be decoded again.
 nonisolated(unsafe) private let imageCache = NSCache<NSString, NSImage>()
+
+/// Remote images must remain available after the first successful fetch.
+/// `NSCache` may evict entries at any time, which would turn a later restyle
+/// into another network request. This cache deliberately has no implicit
+/// eviction; it is scoped to the app process and mutated only on the main actor.
+@MainActor
+final class RemoteImageRenderCache {
+    private var images: [String: NSImage] = [:]
+
+    func image(for urlString: String) -> NSImage? {
+        images[urlString]
+    }
+
+    func insert(_ image: NSImage, for urlString: String) {
+        images[urlString] = image
+    }
+}
+
+@MainActor private let remoteImageCache = RemoteImageRenderCache()
 
 // Remote URLs currently being fetched, so a burst of re-styles (scrolling,
 // cursor moves near the image) doesn't kick off duplicate downloads. Mutated
@@ -100,8 +118,7 @@ extension EditorTextView {
     /// decode failure) and re-styles the document so the result appears —
     /// without blocking the main thread on network I/O.
     private func loadRemoteImage(_ urlString: String) -> ImageDisplay {
-        let key = urlString as NSString
-        if let cached = imageCache.object(forKey: key) { return .image(cached) }
+        if let cached = remoteImageCache.image(for: urlString) { return .image(cached) }
         if undecodableRemoteImages.contains(urlString) { return .blocked(.notAnImage) }
         guard !inFlightRemoteImages.contains(urlString), let url = URL(string: urlString) else { return .pending }
         inFlightRemoteImages.insert(urlString)
@@ -111,7 +128,7 @@ extension EditorTextView {
             Task { @MainActor in
                 inFlightRemoteImages.remove(urlString)
                 if let image {
-                    imageCache.setObject(image, forKey: urlString as NSString)
+                    remoteImageCache.insert(image, for: urlString)
                 } else {
                     undecodableRemoteImages.insert(urlString)
                 }

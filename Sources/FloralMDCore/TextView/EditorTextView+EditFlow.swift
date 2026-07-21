@@ -196,7 +196,8 @@ extension EditorTextView {
            let incremental = BlockParser.incrementalParse(text: rawSource,
                                                           old: blocks,
                                                           editedOldRange: pending.oldRange,
-                                                          delta: pending.delta) {
+                                                          delta: pending.delta,
+                                                          features: markdownFeatures) {
             (newBlocks, changed) = incremental
             #if DEBUG
             verifyIncrementalParse(newBlocks)
@@ -217,7 +218,9 @@ extension EditorTextView {
             listIndentUnit = listIndentState.unit
             defsChanged = linkDefState != oldDefState
         } else {
-            (newBlocks, changed) = BlockParser.parseWithDiff(rawSource, previous: blocks)
+            (newBlocks, changed) = BlockParser.parseWithDiff(
+                rawSource, previous: blocks, features: markdownFeatures
+            )
             let oldDefState = linkDefState
             rebuildListIndentState()
             rebuildLinkDefState()
@@ -291,7 +294,7 @@ extension EditorTextView {
     /// to differ). Skipped under MD_PERF so measurements stay representative.
     private func verifyIncrementalParse(_ incremental: [Block]) {
         guard ProcessInfo.processInfo.environment["MD_PERF"] == nil else { return }
-        let reference = BlockParser.parse(rawSource)
+        let reference = BlockParser.parse(rawSource, features: markdownFeatures)
         guard incremental.count == reference.count else {
             assertionFailure("""
             incremental parse diverged: \(incremental.count) blocks \

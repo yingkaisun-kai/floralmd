@@ -193,7 +193,7 @@ func expectedFullComposition(for editor: EditorTextView) -> NSAttributedString {
         guard block.range.upperBound <= composed.length, block.isStyled else { continue }
         let cursorInBlock: Int? = (i == editor.activeBlockIndex)
             ? max(0, cursorInRaw - block.range.location) : nil
-        let styled = editor.styleBlock(block.content, cursorPosition: cursorInBlock)
+        let styled = editor.styledBlock(block, cursorInBlock: cursorInBlock)
         styled.enumerateAttributes(
             in: NSRange(location: 0, length: styled.length), options: []
         ) { attrs, range, _ in

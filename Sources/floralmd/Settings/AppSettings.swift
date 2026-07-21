@@ -132,6 +132,20 @@ enum AppSettings {
         static let showMinimap = "settings.appearance.showMinimap"
         static let imagePathStyle = "settings.editor.imagePathStyle"
         static let imageAssetFolder = "settings.editor.imageAssetFolder"
+        static let markdownHighlight = "settings.markdown.highlight"
+        static let markdownInlineComment = "settings.markdown.inlineComment"
+        static let markdownCallout = "settings.markdown.callout"
+        static let markdownObsidianCallouts = "settings.markdown.obsidianCallouts"
+        static let markdownCollapsibleCallout = "settings.markdown.collapsibleCallout"
+        static let markdownWikilink = "settings.markdown.wikilink"
+        static let markdownWikilinkEmbed = "settings.markdown.wikilinkEmbed"
+        static let markdownFootnote = "settings.markdown.footnote"
+        static let markdownMath = "settings.markdown.math"
+        static let markdownFrontMatter = "settings.markdown.frontMatter"
+        static let markdownTag = "settings.markdown.tag"
+        static let markdownBlockID = "settings.markdown.blockID"
+        static let markdownImageDimensions = "settings.markdown.imageDimensions"
+        static let markdownMultiBlockComment = "settings.markdown.multiBlockComment"
         static let sendCrashLogs = "settings.advanced.sendCrashLogs"
         static let sentCrashReports = "settings.advanced.sentCrashReports"
         static let lastWindowWidth  = "settings.window.lastWidth"
@@ -240,6 +254,33 @@ enum AppSettings {
             )
         }
         set { UserDefaults.standard.set(newValue, forKey: Key.imageAssetFolder) }
+    }
+
+    static var markdownFeatures: MarkdownFeatures {
+        let pairs: [(String, MarkdownFeatures)] = [
+            (Key.markdownHighlight, .highlight),
+            (Key.markdownInlineComment, .inlineComment),
+            (Key.markdownCallout, .callout),
+            (Key.markdownObsidianCallouts, .obsidianCallouts),
+            (Key.markdownCollapsibleCallout, .collapsibleCallout),
+            (Key.markdownWikilink, .wikilink),
+            (Key.markdownWikilinkEmbed, .wikilinkEmbed),
+            (Key.markdownFootnote, .footnote),
+            (Key.markdownMath, .math),
+            (Key.markdownFrontMatter, .frontMatter),
+            (Key.markdownTag, .tag),
+            (Key.markdownBlockID, .blockID),
+            (Key.markdownImageDimensions, .imageDimensions),
+            (Key.markdownMultiBlockComment, .multiBlockComment),
+        ]
+        return pairs.reduce(into: MarkdownFeatures()) { result, pair in
+            if defaultEnabledBool(forKey: pair.0) { result.insert(pair.1) }
+        }
+    }
+
+    private static func defaultEnabledBool(forKey key: String) -> Bool {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
     }
 
     /// Read mode: render runs of blank lines as proportional vertical space

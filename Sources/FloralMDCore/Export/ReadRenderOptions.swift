@@ -6,6 +6,10 @@ import Foundation
 /// the app layer reads the values from `AppSettings` and passes them in.
 public struct ReadRenderOptions: Sendable, Equatable {
 
+    /// Extensions recognized by the Read renderer. The editor receives the
+    /// same set, keeping feature switches symmetric across both back-ends.
+    public var features: MarkdownFeatures
+
     /// When true, runs of blank lines in the source add proportional vertical
     /// space in the output (one extra blank line → one extra line of space),
     /// preserving the author's intentional spacing instead of collapsing it the
@@ -24,8 +28,10 @@ public struct ReadRenderOptions: Sendable, Equatable {
     /// `.greatestFiniteMagnitude` → uncapped (fills the page).
     public var maxContentWidthPoints: Double
 
-    public init(preserveBlankLines: Bool = true, allowRemoteImages: Bool = false,
+    public init(features: MarkdownFeatures = .all,
+                preserveBlankLines: Bool = true, allowRemoteImages: Bool = false,
                 maxContentWidthPoints: Double = .greatestFiniteMagnitude) {
+        self.features = features
         self.preserveBlankLines = preserveBlankLines
         self.allowRemoteImages = allowRemoteImages
         self.maxContentWidthPoints = maxContentWidthPoints

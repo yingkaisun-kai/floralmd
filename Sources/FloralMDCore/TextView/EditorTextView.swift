@@ -9,6 +9,46 @@ public extension Notification.Name {
     )
 }
 
+/// Delayed, event-transparent link gesture hint. TextKit 2 does not reliably
+/// surface `NSToolTipAttributeName` from the attributed storage, so the editor
+/// owns this tiny AppKit presentation instead of claiming a tooltip exists when
+/// only the attribute is present. It never accepts mouse events or first responder.
+final class LinkHoverHintView: NSVisualEffectView {
+    let label = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        material = .toolTip
+        blendingMode = .withinWindow
+        state = .active
+        wantsLayer = true
+        layer?.cornerRadius = 5
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .labelColor
+        addSubview(label)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func show(_ text: String, near linkRect: NSRect, in visibleRect: NSRect) {
+        label.stringValue = text
+        label.sizeToFit()
+        let size = NSSize(width: label.frame.width + 16, height: label.frame.height + 10)
+        var x = linkRect.minX
+        var y = linkRect.minY - size.height - 6
+        if y < visibleRect.minY + 4 { y = linkRect.maxY + 6 }
+        x = min(max(x, visibleRect.minX + 4), max(visibleRect.minX + 4, visibleRect.maxX - size.width - 4))
+        y = min(max(y, visibleRect.minY + 4), max(visibleRect.minY + 4, visibleRect.maxY - size.height - 4))
+        frame = NSRect(origin: NSPoint(x: x, y: y), size: size)
+        label.frame.origin = NSPoint(x: 8, y: 5)
+        isHidden = false
+    }
+}
+
 /// A single NSTextView with word-level inline preview.
 ///
 /// ## Architecture
@@ -45,6 +85,12 @@ public class EditorTextView: NSTextView {
     /// gives it first refusal; every non-image paste continues through AppKit's
     /// ordinary text path unchanged.
     public var imagePasteHandler: (() -> Bool)?
+
+    /// Localized edit-mode code-copy labels. The app layer supplies the same
+    /// strings used by Read mode; Core defaults to English for tests/embedding.
+    public var codeBlockCopyStrings: ReadModeCopyStrings = .english {
+        didSet { codeBlockControlView.updateStrings(codeBlockCopyStrings) }
+    }
 
     public override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
         var types = super.readablePasteboardTypes
@@ -127,10 +173,35 @@ public class EditorTextView: NSTextView {
     let fontHeightInsertionIndicator = NSTextInsertionIndicator(frame: .zero)
     var insertionIndicatorUpdateScheduled = false
     var insertionIndicatorBlinkTimer: Timer?
-    var imageResizeTrackingArea: NSTrackingArea?
+    var pointerTrackingArea: NSTrackingArea?
     var hoveredImageOverlay: ImageOverlayHit?
     var imageResizeSession: ImageResizeSession?
     let imageResizeChromeView = ImageResizeChromeView(frame: .zero)
+    var hoveredCodeBlock: CodeBlockHit?
+    let codeBlockLanguageOverlayView = CodeBlockLanguageOverlayView(frame: .zero)
+    let codeBlockControlView = CodeBlockControlView(frame: .zero)
+    var codeBlockCopyPasteboard: NSPasteboard = .general
+    struct HoveredLinkHit: Equatable {
+        let range: NSRange
+        let cursorRect: NSRect
+    }
+    var hoveredLinkHit: HoveredLinkHit?
+    var linkHintShowWorkItem: DispatchWorkItem?
+    let linkHoverHintView = LinkHoverHintView(frame: .zero)
+    var pointerModifierFlags: NSEvent.ModifierFlags = []
+    /// App-layer copy for the hover hint and accessibility help.
+    /// The executable target owns interface-language selection; Core owns the
+    /// hover lifecycle and defaults to English for standalone/test use.
+    public var linkNavigationHint = "Hold Command and click to follow link" {
+        didSet {
+            guard linkNavigationHint != oldValue else { return }
+            linkHoverHintView.label.stringValue = linkNavigationHint
+            if hoveredLinkHit != nil { setAccessibilityHelp(linkNavigationHint) }
+            if let hit = hoveredLinkHit, !linkHoverHintView.isHidden {
+                linkHoverHintView.show(linkNavigationHint, near: hit.cursorRect, in: visibleRect)
+            }
+        }
+    }
     /// Documents at or below this UTF-16 length are laid out in full once
     /// styling converges, eliminating TextKit 2 height estimates (and the
     /// scroll jumps they cause). See `scheduleFullLayoutSettle`.
@@ -186,6 +257,7 @@ public class EditorTextView: NSTextView {
         didSet {
             guard oldValue != viewMode else { return }
             isEditable = (viewMode != .reading)
+            if viewMode != .edit { clearCodeBlockControlHover() }
             // Re-style every block under the new mode (viewport-first for big docs).
             guard !blocks.isEmpty else { return }
             recomposeDirty(IndexSet(integersIn: 0..<blocks.count),
@@ -197,6 +269,17 @@ public class EditorTextView: NSTextView {
     /// settings layer customize a built-in type's color / icon / border /
     /// background (or add new types). Empty by default (GitHub styles).
     public var calloutStyleOverrides: [String: CalloutStyle] = [:]
+
+    /// Markdown extensions recognized by this editor. Changing the set reparses
+    /// block structure as well as inline spans because some extensions merge
+    /// multiple source lines into one rendering unit.
+    public var markdownFeatures: MarkdownFeatures = .all {
+        didSet {
+            guard markdownFeatures != oldValue, !hasMarkedText() else { return }
+            blocks = BlockParser.parse(rawSource, previous: blocks, features: markdownFeatures)
+            recompose(cursorInRaw: currentCursorInRaw())
+        }
+    }
 
     /// When true (the default), edits and cursor moves keep the current line
     /// vertically centered (typewriter scrolling); when false, scrolling falls
@@ -331,8 +414,8 @@ public class EditorTextView: NSTextView {
         // interrupted — a caret move, a focus change — it can be left stranded
         // (`hasMarkedText()` stuck true), which permanently breaks the
         // storage==rawSource sync in `didChangeText` and drifts the caret on every
-        // edit (see docs/investigations/delete-drift-investigation.md). A live-preview markdown
-        // editor needs neither, and we already disable the other auto-substitutions
+        // edit. A live-preview markdown editor needs neither, and we already
+        // disable the other auto-substitutions
         // above — so close this marked-text source too.
         isAutomaticTextCompletionEnabled = false
         if #available(macOS 14.0, *) { inlinePredictionType = .no }
@@ -345,7 +428,16 @@ public class EditorTextView: NSTextView {
         fontHeightInsertionIndicator.displayMode = .hidden
         fontHeightInsertionIndicator.automaticModeOptions = []
         imageResizeChromeView.isHidden = true
+        codeBlockLanguageOverlayView.editor = self
+        codeBlockLanguageOverlayView.frame = bounds
+        codeBlockLanguageOverlayView.autoresizingMask = [.width, .height]
+        codeBlockControlView.isHidden = true
+        codeBlockControlView.onCopy = { [weak self] in self?.copyHoveredCodeBlock() }
         addSubview(imageResizeChromeView)
+        addSubview(codeBlockLanguageOverlayView)
+        addSubview(codeBlockControlView)
+        linkHoverHintView.isHidden = true
+        addSubview(linkHoverHintView)
         addSubview(fontHeightInsertionIndicator)
         selectedTextAttributes = [
             .backgroundColor: selectionHighlightColor,
@@ -356,7 +448,7 @@ public class EditorTextView: NSTextView {
         rawSource = ""
         rebuildListIndentState()
         rebuildLinkDefState()
-        blocks = BlockParser.parse(rawSource)
+        blocks = BlockParser.parse(rawSource, features: markdownFeatures)
         recompose(cursorInRaw: 0)
 
         // Vend decoration-drawing layout fragments (TextKit 2).
@@ -449,6 +541,9 @@ public class EditorTextView: NSTextView {
         installScrollPromotionObserver()
         if window == nil {
             stopFontHeightInsertionIndicator()
+            hoveredLinkHit = nil
+            hideLinkHoverHint()
+            setAccessibilityHelp(nil)
         } else {
             scheduleFontHeightInsertionIndicatorUpdate()
         }
@@ -468,36 +563,62 @@ public class EditorTextView: NSTextView {
         ]
         typingAttributes = baseAttributes
         recomposeAllDirty()
+        codeBlockLanguageOverlayView.needsDisplay = true
+        codeBlockControlView.needsDisplay = true
         scheduleFontHeightInsertionIndicatorUpdate()
     }
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let imageResizeTrackingArea { removeTrackingArea(imageResizeTrackingArea) }
+        if let pointerTrackingArea { removeTrackingArea(pointerTrackingArea) }
         let area = NSTrackingArea(
             rect: .zero,
             options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
-        imageResizeTrackingArea = area
+        pointerTrackingArea = area
         addTrackingArea(area)
     }
 
     public override func resetCursorRects() {
         super.resetCursorRects()
+        if let hit = hoveredLinkHit {
+            addCursorRect(hit.cursorRect,
+                          cursor: pointerModifierFlags.contains(.command) ? .pointingHand : .iBeam)
+        }
         if let hit = hoveredImageOverlay {
             addCursorRect(imageResizeHandleRect(for: hit.frame), cursor: .resizeLeftRight)
         }
     }
 
     public override func mouseMoved(with event: NSEvent) {
-        updateImageResizeHover(at: convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        updateImageResizeHover(at: point)
+        updateCodeBlockControlHover(at: point)
         super.mouseMoved(with: event)
+        updatePointerHover(at: point, modifiers: event.modifierFlags)
+    }
+
+    public override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        pointerModifierFlags = event.modifierFlags
+        // Cursor rects are normally reevaluated after pointer movement. A
+        // modifier-only event has no movement, so synchronize immediately;
+        // `set()` replaces state and cannot unbalance a global push/pop stack.
+        if hoveredLinkHit != nil {
+            window?.invalidateCursorRects(for: self)
+            applyPointerCursor(at: lastPointerLocation, modifiers: event.modifierFlags)
+        }
     }
 
     public override func mouseExited(with event: NSEvent) {
         clearImageResizeHover()
+        clearCodeBlockControlHover()
+        hoveredLinkHit = nil
+        hideLinkHoverHint()
+        setAccessibilityHelp(nil)
+        window?.invalidateCursorRects(for: self)
         super.mouseExited(with: event)
     }
 
@@ -522,21 +643,60 @@ public class EditorTextView: NSTextView {
     /// that the resulting selection change does not re-center the viewport —
     /// centering when the user merely clicks somewhere feels glitchy.
     public override func mouseDown(with event: NSEvent) {
+        hideLinkHoverHint()
+        let point = convert(event.locationInWindow, from: nil)
+        // NSTextView may still claim mouseDown for an event-transparent child
+        // view. Intercept the visible button before AppKit changes selection.
+        if handleCodeBlockControlClick(at: point) { return }
+        // Some input drivers deliver a click at a new location without a
+        // preceding mouseMoved event. Refresh source-backed code chrome from
+        // the click point so direct activation and ordinary hover agree.
+        updateCodeBlockControlHover(at: point)
         if beginImageResizeIfNeeded(with: event) { return }
         clearImageResizeHover()
-        if event.modifierFlags.contains(.command) {
-            if let target = wikiTarget(at: event) {
-                followWikiLink(target)
-                return
-            }
-            if let dest = linkDestination(at: event) {
-                followLinkDestination(dest)
-                return
-            }
+        if let action = linkNavigationAction(at: event) {
+            perform(action)
+            return
         }
         suppressTypewriterCentering = true
         super.mouseDown(with: event)
         suppressTypewriterCentering = false
+    }
+
+    enum LinkNavigationAction: Equatable {
+        case wiki(String)
+        case regular(String)
+    }
+
+    /// The sole click gate: without Command, a link deliberately produces no
+    /// navigation action and NSTextView retains ordinary editing ownership.
+    func linkNavigationAction(at event: NSEvent) -> LinkNavigationAction? {
+        guard let index = clickCharIndex(at: event) else { return nil }
+        return linkNavigationAction(atCharacterIndex: index,
+                                    modifiers: event.modifierFlags)
+    }
+
+    func linkNavigationAction(atCharacterIndex index: Int,
+                              modifiers: NSEvent.ModifierFlags) -> LinkNavigationAction?
+    {
+        guard modifiers.contains(.command), let storage = textStorage,
+              index >= 0, index < storage.length else { return nil }
+        if let target = storage.attribute(.editorWikiTarget, at: index,
+                                          effectiveRange: nil) as? String {
+            return .wiki(target)
+        }
+        if let destination = storage.attribute(.editorLinkURL, at: index,
+                                               effectiveRange: nil) as? String {
+            return .regular(destination)
+        }
+        return nil
+    }
+
+    private func perform(_ action: LinkNavigationAction) {
+        switch action {
+        case .wiki(let target): followWikiLink(target)
+        case .regular(let destination): followLinkDestination(destination)
+        }
     }
 
     public override func mouseDragged(with event: NSEvent) {
@@ -552,10 +712,15 @@ public class EditorTextView: NSTextView {
     /// The storage character index directly under a mouse event, or nil if the
     /// click doesn't land on a laid-out glyph (e.g. past the end of a line).
     func clickCharIndex(at event: NSEvent) -> Int? {
+        clickCharIndex(at: convert(event.locationInWindow, from: nil))
+    }
+
+    /// The storage character index directly under a point in view coordinates.
+    func clickCharIndex(at pointInView: NSPoint) -> Int? {
         guard let tlm = textLayoutManager,
               let storage = textStorage, storage.length > 0 else { return nil }
 
-        var point = convert(event.locationInWindow, from: nil)
+        var point = pointInView
         point.x -= textContainerOrigin.x
         point.y -= textContainerOrigin.y
 
@@ -573,6 +738,128 @@ public class EditorTextView: NSTextView {
               let paraStart = fragment.textElement?.elementRange?.location else { return nil }
         let charIndex = tlm.offset(from: tlm.documentRange.location, to: paraStart) + indexInParagraph
         return charIndex < storage.length ? charIndex : nil
+    }
+
+    /// Re-evaluates link hover after the clip view scrolls under a stationary
+    /// pointer. AppKit does not promise a new mouseMoved event for that case.
+    func refreshPointerHoverFromWindow() {
+        guard let window else { return }
+        updatePointerHover(at: convert(window.mouseLocationOutsideOfEventStream, from: nil),
+                           modifiers: NSEvent.modifierFlags)
+    }
+
+    var lastPointerLocation: NSPoint {
+        guard let window else { return .zero }
+        return convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    }
+
+    func updatePointerHover(at point: NSPoint, modifiers: NSEvent.ModifierFlags) {
+        pointerModifierFlags = modifiers
+        let oldHit = hoveredLinkHit
+        hoveredLinkHit = linkHoverHit(at: point)
+        if oldHit != hoveredLinkHit { updateLinkHoverHint(from: oldHit) }
+        if (oldHit == nil) != (hoveredLinkHit == nil) {
+            setAccessibilityHelp(hoveredLinkHit == nil ? nil : linkNavigationHint)
+        }
+        if oldHit != hoveredLinkHit {
+            window?.invalidateCursorRects(for: self)
+        }
+        applyPointerCursor(at: point, modifiers: modifiers)
+    }
+
+    private func updateLinkHoverHint(from oldHit: HoveredLinkHit?) {
+        guard let hit = hoveredLinkHit else {
+            hideLinkHoverHint()
+            return
+        }
+        // Moving between wrapped segments of the same link should reposition
+        // an already-visible hint, not hide and restart it.
+        if oldHit?.range == hit.range, !linkHoverHintView.isHidden {
+            linkHoverHintView.show(linkNavigationHint, near: hit.cursorRect, in: visibleRect)
+            return
+        }
+        hideLinkHoverHint()
+        let expectedRange = hit.range
+        let work = DispatchWorkItem { [weak self] in
+            self?.showLinkHoverHint(ifExpectedRange: expectedRange)
+        }
+        linkHintShowWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+    }
+
+    func showLinkHoverHint(ifExpectedRange expectedRange: NSRange) {
+        guard hoveredLinkHit?.range == expectedRange,
+              let currentHit = hoveredLinkHit else { return }
+        linkHoverHintView.show(linkNavigationHint,
+                               near: currentHit.cursorRect,
+                               in: visibleRect)
+    }
+
+    private func hideLinkHoverHint() {
+        linkHintShowWorkItem?.cancel()
+        linkHintShowWorkItem = nil
+        linkHoverHintView.isHidden = true
+    }
+
+    func applyPointerCursor(at point: NSPoint, modifiers: NSEvent.ModifierFlags) {
+        switch pointerCursorKind(at: point, modifiers: modifiers) {
+        case .resizeLeftRight: NSCursor.resizeLeftRight.set()
+        case .pointingHand: NSCursor.pointingHand.set()
+        case .iBeam: NSCursor.iBeam.set()
+        }
+    }
+
+    enum PointerCursorKind: Equatable {
+        case resizeLeftRight
+        case pointingHand
+        case iBeam
+    }
+
+    func pointerCursorKind(at point: NSPoint,
+                           modifiers: NSEvent.ModifierFlags) -> PointerCursorKind
+    {
+        if let image = hoveredImageOverlay,
+           imageResizeHandleRect(for: image.frame).contains(point) {
+            return .resizeLeftRight
+        } else if hoveredLinkHit != nil, modifiers.contains(.command) {
+            return .pointingHand
+        } else {
+            return .iBeam
+        }
+    }
+
+    /// Link range plus the exact wrapped-line segment under `point`.
+    func linkHoverHit(at pointInView: NSPoint) -> HoveredLinkHit? {
+        guard let tlm = textLayoutManager, let storage = textStorage,
+              let index = clickCharIndex(at: pointInView) else { return nil }
+        var linkRange = NSRange()
+        let hasLink = storage.attribute(.editorWikiTarget, at: index, effectiveRange: &linkRange) != nil
+            || storage.attribute(.editorLinkURL, at: index, effectiveRange: &linkRange) != nil
+        guard hasLink else { return nil }
+
+        var point = pointInView
+        point.x -= textContainerOrigin.x
+        point.y -= textContainerOrigin.y
+        guard let fragment = tlm.textLayoutFragment(for: point),
+              let paraStart = fragment.textElement?.elementRange?.location else { return nil }
+        let paragraphOffset = tlm.offset(from: tlm.documentRange.location, to: paraStart)
+        let frame = fragment.layoutFragmentFrame
+        let pointInFragment = CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)
+        guard let line = fragment.textLineFragments.first(where: {
+            $0.typographicBounds.contains(pointInFragment)
+        }) else { return nil }
+
+        let localLink = NSRange(location: linkRange.location - paragraphOffset,
+                                length: linkRange.length)
+        let segment = NSIntersectionRange(localLink, line.characterRange)
+        guard segment.length > 0 else { return nil }
+        let start = line.locationForCharacter(at: segment.location).x
+        let end = line.locationForCharacter(at: segment.upperBound).x
+        let x = textContainerOrigin.x + frame.minX + line.typographicBounds.minX + min(start, end)
+        let y = textContainerOrigin.y + frame.minY + line.typographicBounds.minY
+        let rect = NSRect(x: x, y: y, width: max(1, abs(end - start)),
+                          height: line.typographicBounds.height)
+        return HoveredLinkHit(range: linkRange, cursorRect: rect)
     }
 
     /// The raw destination string of the regular link under a mouse event, or
@@ -652,7 +939,7 @@ public class EditorTextView: NSTextView {
         rawSource = ts.string
         rebuildListIndentState()
         rebuildLinkDefState()
-        blocks = BlockParser.parse(rawSource, previous: blocks)
+        blocks = BlockParser.parse(rawSource, previous: blocks, features: markdownFeatures)
         recompose(cursorInRaw: min(selectedRange().location, (rawSource as NSString).length))
         let startsUndoGroup = consumePendingDocumentChangeGroupStart()
         publishSynchronizedTextChange(
@@ -734,7 +1021,7 @@ public class EditorTextView: NSTextView {
             rawSource = LineEnding.normalize(content)
             rebuildListIndentState()
             rebuildLinkDefState()
-            blocks = BlockParser.parse(rawSource)
+            blocks = BlockParser.parse(rawSource, features: markdownFeatures)
             Log.blockStructure(blocks)
             undoStack.removeAll()
             redoStack.removeAll()

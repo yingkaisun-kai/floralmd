@@ -163,6 +163,7 @@ extension EditorTextView {
         typingAttributes = baseAttributes
 
         isUpdating = false
+        codeBlockLanguageOverlayView.needsDisplay = true
 
         if !deferred.isEmpty {
             scheduleProgressiveStyling()

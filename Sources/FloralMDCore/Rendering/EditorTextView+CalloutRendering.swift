@@ -44,15 +44,20 @@ extension EditorTextView {
         let firstLine = ns.substring(with: NSRange(location: contentStart, length: lineEnd - contentStart))
 
         guard let rel = Callout.parseMarker(firstLine),
+              Callout.isEnabled(rel.type, features: markdownFeatures),
               let style = Callout.style(for: rel.type, overrides: calloutStyleOverrides) else { return nil }
 
         func abs(_ r: NSRange) -> NSRange { NSRange(location: r.location + contentStart, length: r.length) }
+        let collapsible = markdownFeatures.contains(.collapsibleCallout)
+        let fold = collapsible ? rel.fold : nil
         let marker = Callout.Marker(type: rel.type,
                                     openBracket: abs(rel.openBracket),
                                     typeRange: abs(rel.typeRange),
-                                    closeBracket: abs(rel.closeBracket))
+                                    closeBracket: abs(rel.closeBracket),
+                                    fold: fold,
+                                    foldRange: fold != nil ? rel.foldRange.map(abs) : nil)
 
-        let titleStart = marker.closeBracket.upperBound
+        let titleStart = marker.foldRange?.upperBound ?? marker.closeBracket.upperBound
         let customRaw = titleStart < lineEnd
             ? ns.substring(with: NSRange(location: titleStart, length: lineEnd - titleStart)) : ""
         let title = Callout.title(type: marker.type, customTitle: customRaw)
@@ -127,9 +132,8 @@ extension EditorTextView {
                 // never an image: drawing an image on this (potentially
                 // multi-line, wrapping) header line wedges TextKit 2's layout to
                 // a single line — clipping the title — by every image-drawing
-                // mechanism tried, while shape drawing is unaffected. See
-                // docs/investigations/archives/callout-title-wrap-investigation.md. Default callouts (the
-                // `else` below) keep their icon+name image: their synthesized
+                // mechanism tried, while shape drawing is unaffected. Default
+                // callouts (the `else` below) keep their icon+name image: their synthesized
                 // type name is short and never wraps, so the single-line image
                 // overlay never hits the wedge.
                 let markerHide = NSRange(location: header.location,
@@ -262,7 +266,7 @@ extension EditorTextView {
         // inactive callout (the cursor is elsewhere), so inner blocks render
         // fully — no cursor reveal needed.
         let sub = NSMutableAttributedString(string: stripped, attributes: baseAttributes)
-        for b in BlockParser.parse(stripped) {
+        for b in BlockParser.parse(stripped, features: markdownFeatures) {
             guard b.range.upperBound <= sub.length else { continue }
             let styled = styleBlock(b.content, cursorPosition: nil)
             styled.enumerateAttributes(in: NSRange(location: 0, length: styled.length),
@@ -408,8 +412,8 @@ extension EditorTextView {
     /// sized to a `pointSize` square and vertically centered on the bold
     /// title's optical middle (same optics as the header image below). A path
     /// — not an image — because the custom-title line wraps, and an image
-    /// drawn on a multi-line fragment wedges its layout to one line (see
-    /// docs/investigations/archives/callout-title-wrap-investigation.md). `nil` for an unknown icon.
+    /// drawn on a multi-line fragment wedges its layout to one line. `nil` for
+    /// an unknown icon.
     private func calloutIconPathOverlay(iconName: String, color: NSColor,
                                         titleFont: NSFont, iconNudge: CGFloat) -> FragmentOverlay? {
         let pointSize = bodyFont.pointSize

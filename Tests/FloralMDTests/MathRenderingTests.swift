@@ -142,8 +142,8 @@ struct DisplayMathRenderingTests {
         #expect(!isHidden(at: 2, in: styled))             // source visible
     }
 
-    // Regression (misc/bug-repros/math-env-with-taller-lines-fractions-integral-limit-padding-bug.png):
-    // a tall multi-row environment (aligned/cases) has a large descent portion
+    // Regression: a tall multi-row environment (aligned/cases) has a large
+    // descent portion
     // (much of the block sits below the anchor's baseline), unlike a typical
     // single-row equation. Reserving the image's full height as the line's
     // `minimumLineHeight` pins the whole height above the baseline, leaving a

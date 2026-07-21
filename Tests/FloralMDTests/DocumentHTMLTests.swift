@@ -20,6 +20,23 @@ struct DocumentHTMLTests {
         #expect(out.contains("<div class=\"page\"><h1 id=\"floralmd-l1\">Hi</h1></div>"))
     }
 
+    @Test("Copy controls are opt-in for the interactive Read WebView")
+    func readModeCopyControlsAreOptIn() {
+        let markdown = "```swift\nlet x = 1\n```"
+        #expect(!doc(markdown).contains("href=\"x-floralmd-copy:"))
+
+        let interactive = DocumentHTML.full(
+            markdown: markdown,
+            theme: .default,
+            callouts: Callout.defaultStyles,
+            dark: false,
+            readModeCopyStrings: .english
+        )
+        #expect(interactive.contains("href=\"x-floralmd-copy:"))
+        #expect(interactive.contains("Copy code"))
+        #expect(interactive.contains("script-src 'none'"))
+    }
+
     @Test("Can leave the Read page background transparent without changing the default")
     func transparentBackground() {
         let transparent = DocumentHTML.full(
@@ -105,7 +122,7 @@ struct DocumentHTMLTests {
 
     // End-to-end regression for the read-mode environment bug: with intact `\\`
     // row separators, SwiftMath renders the environment to an image instead of
-    // the corrupted-latex `<code>` fallback. (misc/bug-repros/math-env-read-mode.png)
+    // the corrupted-latex `<code>` fallback.
     @Test("Display environment renders to an image, not the source fallback")
     func displayEnvironmentRenders() {
         let out = doc("$$\n\\begin{aligned} \\pi &= 3 \\\\ e &= 2 \\end{aligned}\n$$")

@@ -13,6 +13,7 @@ extension SyntaxHighlighter {
 
     struct SpanCollector: MarkupWalker {
         let source: String
+        let features: MarkdownFeatures
         private let lines: [String]
         var spans: [Span] = []
 
@@ -30,8 +31,9 @@ extension SyntaxHighlighter {
         /// recursively by the styling layer), so this never counts them.
         private var plainQuoteDepth = 0
 
-        init(source: String) {
+        init(source: String, features: MarkdownFeatures = .all) {
             self.source = source
+            self.features = features
             self.lines = source.components(separatedBy: "\n")
         }
 
@@ -278,7 +280,9 @@ extension SyntaxHighlighter {
             }
             let full = nsRange(for: range)
             let nsSource = source as NSString
-            let opensCallout = Self.quoteOpensCallout(firstLineOf: full, in: nsSource)
+            let opensCallout = Self.quoteOpensCallout(
+                firstLineOf: full, in: nsSource, features: features
+            )
 
             // A callout nested inside a plain quote is fully literal: emit no
             // span and don't descend (matches showing `> [!note]` raw inside an
@@ -389,7 +393,11 @@ extension SyntaxHighlighter {
         /// Whether the first line of a block quote (its source `range`) opens a
         /// callout — `> [!type]` (known or unknown type). Mirrors
         /// `BlockParser.quoteRunOpensCallout` over an NSRange.
-        private static func quoteOpensCallout(firstLineOf range: NSRange, in source: NSString) -> Bool {
+        private static func quoteOpensCallout(
+            firstLineOf range: NSRange,
+            in source: NSString,
+            features: MarkdownFeatures
+        ) -> Bool {
             let bound = NSRange(location: range.location, length: range.length)
             let nl = source.range(of: "\n", options: [], range: bound)
             let lineEnd = nl.location == NSNotFound ? range.upperBound : nl.location
@@ -397,7 +405,8 @@ extension SyntaxHighlighter {
                                                       length: lineEnd - range.location))
             let trimmed = line.drop(while: { $0 == " " })
             guard trimmed.first == ">" else { return false }
-            return Callout.parseMarker(String(trimmed.dropFirst())) != nil
+            guard let marker = Callout.parseMarker(String(trimmed.dropFirst())) else { return false }
+            return Callout.isEnabled(marker.type, features: features)
         }
 
         // MARK: - Tables

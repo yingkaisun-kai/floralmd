@@ -35,6 +35,7 @@ private extension SettingsPaneID {
         switch self {
         case .general: AppCopy.text("General", "通用")
         case .editor: AppCopy.text("Editor", "编辑器")
+        case .markdown: AppCopy.text("Markdown", "Markdown")
         case .shortcuts: AppCopy.text("Shortcuts", "快捷键")
         case .appearance: AppCopy.text("Appearance", "外观")
         case .advanced: AppCopy.text("Advanced", "高级")
@@ -45,6 +46,7 @@ private extension SettingsPaneID {
         switch self {
         case .general: "gearshape"
         case .editor: "text.cursor"
+        case .markdown: "text.badge.checkmark"
         case .shortcuts: "keyboard"
         case .appearance: "eyeglasses"
         case .advanced: "gearshape.2"
@@ -191,6 +193,7 @@ private final class SettingsDetailViewController: NSViewController {
     private lazy var controllers: [SettingsPaneID: NSViewController] = [
         .general: NSHostingController(rootView: GeneralSettingsView()),
         .editor: NSHostingController(rootView: EditorSettingsView()),
+        .markdown: NSHostingController(rootView: MarkdownSettingsView()),
         .shortcuts: NSHostingController(rootView: ShortcutsSettingsView()),
         .appearance: NSHostingController(rootView: AppearanceSettingsView(fonts: fonts)),
         .advanced: NSHostingController(rootView: AdvancedSettingsView()),

@@ -1,0 +1,10 @@
+{
+  "name": "json",
+  "displayName": "JSON",
+  "aliases": ["jsonc", "json5"],
+  "lineComment": null,
+  "blockComment": null,
+  "strings": ["\""],
+  "keywords": ["true", "false", "null"],
+  "types": []
+}

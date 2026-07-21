@@ -63,21 +63,36 @@ extension EditorTextView {
     @objc public func formatItalic(_ sender: Any?)        { toggleStarEmphasis(stars: 1) }
     @objc public func formatUnderline(_ sender: Any?)     { toggleInlineWrap(open: "<u>", close: "</u>", expandToWord: true) }
     @objc public func formatStrikethrough(_ sender: Any?) { toggleInlineWrap(open: "~~", close: "~~", expandToWord: true) }
-    @objc public func formatHighlight(_ sender: Any?)     { toggleInlineWrap(open: "==", close: "==", expandToWord: true) }
+    @objc public func formatHighlight(_ sender: Any?)     {
+        guard markdownFeatures.contains(.highlight) else { return }
+        toggleInlineWrap(open: "==", close: "==", expandToWord: true)
+    }
     @objc public func formatCode(_ sender: Any?)          { toggleInlineWrap(open: "`", close: "`", expandToWord: true) }
-    @objc public func formatInlineMath(_ sender: Any?)    { toggleInlineWrap(open: "$", close: "$", expandToWord: true) }
+    @objc public func formatInlineMath(_ sender: Any?)    {
+        guard markdownFeatures.contains(.math) else { return }
+        toggleInlineWrap(open: "$", close: "$", expandToWord: true)
+    }
     @objc public func formatKeyboard(_ sender: Any?)      { toggleInlineWrap(open: "<kbd>", close: "</kbd>", expandToWord: true) }
-    @objc public func formatComment(_ sender: Any?)       { toggleInlineWrap(open: "%%", close: "%%", expandToWord: true) }
+    @objc public func formatComment(_ sender: Any?)       {
+        guard markdownFeatures.contains(.inlineComment) else { return }
+        toggleInlineWrap(open: "%%", close: "%%", expandToWord: true)
+    }
 
     // MARK: - Inline links
     // Link / Image: caret in `()` so URL can be typed next.
     // Wikilink:     expands to the current word at caret (expandToWord: true).
     // Footnote:     NOT invertible — inserts [^n] marker and EOF definition.
 
-    @objc public func formatWikilink(_ sender: Any?)      { toggleInlineWrap(open: "[[", close: "]]", expandToWord: true) }
+    @objc public func formatWikilink(_ sender: Any?)      {
+        guard markdownFeatures.contains(.wikilink) else { return }
+        toggleInlineWrap(open: "[[", close: "]]", expandToWord: true)
+    }
     @objc public func formatLink(_ sender: Any?)          { insertLink() }
     @objc public func formatImage(_ sender: Any?)         { insertImage() }
-    @objc public func formatFootnote(_ sender: Any?)      { insertFootnote() }
+    @objc public func formatFootnote(_ sender: Any?)      {
+        guard markdownFeatures.contains(.footnote) else { return }
+        insertFootnote()
+    }
 
     /// Inserts an already-resolved image destination as one undoable Markdown
     /// edit. The selected source becomes alt text; otherwise `defaultAltText`
@@ -103,7 +118,10 @@ extension EditorTextView {
     @objc public func formatBlockQuote(_ sender: Any?)    { toggleLinePrefix("> ") }
     @objc public func formatThematicBreak(_ sender: Any?) { insertThematicBreak() }
     @objc public func formatCodeBlock(_ sender: Any?)     { insertCodeBlock() }
-    @objc public func formatMathBlock(_ sender: Any?)     { insertMathBlock() }
+    @objc public func formatMathBlock(_ sender: Any?)     {
+        guard markdownFeatures.contains(.math) else { return }
+        insertMathBlock()
+    }
     @objc public func formatTable(_ sender: Any?)         { insertTable() }
 
     /// Heading level read from the menu item's `tag` (1–6).
@@ -117,6 +135,7 @@ extension EditorTextView {
     /// uppercase for GitHub alerts, lowercase for Obsidian callouts).
     @objc public func formatCallout(_ sender: Any?) {
         guard let type = (sender as? NSMenuItem)?.representedObject as? String else { return }
+        guard Callout.isEnabled(type, features: markdownFeatures) else { return }
         applyCalloutType(type)
     }
 
@@ -125,7 +144,13 @@ extension EditorTextView {
 
     public override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if let action = menuItem.action, Self.formattingActions.contains(action) {
-            return viewMode != .reading
+            guard viewMode != .reading else { return false }
+            if action == #selector(formatCallout(_:)),
+               let type = menuItem.representedObject as? String {
+                return Callout.isEnabled(type, features: markdownFeatures)
+            }
+            guard let required = requiredFeature(for: menuItem) else { return true }
+            return markdownFeatures.contains(required)
         }
         return super.validateMenuItem(menuItem)
     }
@@ -140,6 +165,18 @@ extension EditorTextView {
         #selector(formatCodeBlock(_:)), #selector(formatMathBlock(_:)), #selector(formatTable(_:)),
         #selector(formatHeading(_:)), #selector(formatCallout(_:)),
     ]
+
+    private func requiredFeature(for menuItem: NSMenuItem) -> MarkdownFeatures? {
+        switch menuItem.action {
+        case #selector(formatHighlight(_:)): return .highlight
+        case #selector(formatInlineMath(_:)), #selector(formatMathBlock(_:)): return .math
+        case #selector(formatComment(_:)): return .inlineComment
+        case #selector(formatWikilink(_:)): return .wikilink
+        case #selector(formatFootnote(_:)): return .footnote
+        case #selector(formatCallout(_:)): return .callout
+        default: return nil
+        }
+    }
 
     // MARK: - Heading
 

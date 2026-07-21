@@ -32,6 +32,7 @@ let package = Package(
                 .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
             ],
+            resources: [.copy("Resources/Syntaxes")],
             swiftSettings: isProductionBuild ? [.define("FLORALMD_PRODUCTION")] : []),
         // The user-facing app is "FloralMD" (CFBundleName); the executable target
         // and Mach-O binary use the matching lowercase name `floralmd`.

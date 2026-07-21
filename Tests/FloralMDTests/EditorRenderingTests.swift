@@ -688,16 +688,20 @@ struct EditorStylingTests {
         #expect(!isHidden(at: 0, in: styled))
     }
 
-    @Test("Code block fences are dimmed; content is monospace and syntax-highlighted")
+    @Test("Inactive labelled code blocks hide fences, draw a canonical language label, and preserve raw source")
     @MainActor func codeBlockStyling() {
         let editor = makeEditor()
         let styled = editor.styleBlock("```swift\nlet hello = 1\n```")
         #expect(styled.string == "```swift\nlet hello = 1\n```")
-        // Fences dimmed.
-        #expect(isDimmed(at: 0, in: styled))
+        #expect(styled.attribute(.foregroundColor, at: 0,
+                                 effectiveRange: nil) as? NSColor == NSColor.clear)
+        #expect(styled.attribute(.codeBlockLanguageLabel, at: 0,
+                                 effectiveRange: nil) as? String == "Swift")
         let ns = styled.string as NSString
         let kwLoc = ns.range(of: "let").location
         let plainLoc = ns.range(of: "hello").location
+        #expect(styled.attribute(.codeBlockLanguageLabel, at: kwLoc,
+                                 effectiveRange: nil) == nil)
         // Content is monospace.
         let f = styled.attribute(.font, at: plainLoc, effectiveRange: nil) as? NSFont
         #expect(f?.isFixedPitch == true)
@@ -706,6 +710,35 @@ struct EditorStylingTests {
         let plain = styled.attribute(.foregroundColor, at: plainLoc, effectiveRange: nil) as? NSColor
         #expect(kw != nil && plain != nil)
         #expect(kw != plain)
+    }
+
+    @Test("Active code block shows raw fences and suppresses the language label")
+    @MainActor func activeCodeBlockSuppressesLanguageLabel() {
+        let editor = makeEditor()
+        let styled = editor.styleBlock("```swift\nlet hello = 1\n```", cursorPosition: 12)
+        #expect(isDimmed(at: 0, in: styled))
+        #expect(styled.attribute(.codeBlockLanguageLabel, at: 0,
+                                 effectiveRange: nil) == nil)
+    }
+
+    @Test("Unlabelled and plain-text fenced code blocks do not draw a language label")
+    @MainActor func plainCodeBlocksSuppressLanguageLabel() {
+        let editor = makeEditor()
+        for language in ["", "plain", "plaintext", "text", "txt", "none"] {
+            let fence = language.isEmpty ? "```" : "```\(language)"
+            let styled = editor.styleBlock("\(fence)\nraw value\n```")
+            #expect(styled.attribute(.codeBlockLanguageLabel, at: 0,
+                                     effectiveRange: nil) == nil,
+                    "unexpected label for \(String(reflecting: language))")
+        }
+    }
+
+    @Test("Language aliases use the syntax definition display name")
+    @MainActor func codeBlockLanguageAliasUsesDisplayName() {
+        let editor = makeEditor()
+        let styled = editor.styleBlock("```py\nprint('hello')\n```")
+        #expect(styled.attribute(.codeBlockLanguageLabel, at: 0,
+                                 effectiveRange: nil) as? String == "Python")
     }
 
     @Test("Plain-text code blocks use one foreground color")

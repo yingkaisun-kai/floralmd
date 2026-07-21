@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Foundation
 
 /// Visual style for a callout type. Fields are plain and serializable (hex
@@ -90,6 +91,22 @@ public struct CalloutStyle: Sendable, Equatable {
 /// existing block-quote span.
 public enum Callout {
 
+    /// The five alert types GitHub recognizes. Obsidian accepts these too, but
+    /// they remain available when only the GFM-compatible subset is enabled.
+    public static let gfmAlertTypes: Set<String> = [
+        "note", "tip", "important", "warning", "caution",
+    ]
+
+    public static func isGFMAlert(_ type: String) -> Bool {
+        gfmAlertTypes.contains(type.lowercased())
+    }
+
+    /// Whether a known callout type is enabled by the current extension set.
+    public static func isEnabled(_ type: String, features: MarkdownFeatures) -> Bool {
+        guard features.contains(.callout), style(for: type) != nil else { return false }
+        return isGFMAlert(type) || features.contains(.obsidianCallouts)
+    }
+
     /// Default type → style map (lowercased keys). GitHub's five built-in types
     /// keep their accents; the rest are Obsidian's default callouts mapped to the
     /// closest color + SF Symbol (with their aliases). Designed to be merged with
@@ -139,10 +156,27 @@ public enum Callout {
     /// A matched `[!type]` marker, with UTF-16 ranges relative to the scanned
     /// first-line string.
     public struct Marker: Equatable {
+        public enum Fold: Equatable, Sendable {
+            case folded
+            case expanded
+        }
+
         public let type: String          // lowercased
         public let openBracket: NSRange  // "[!"
         public let typeRange: NSRange    // the type word
         public let closeBracket: NSRange // "]"
+        public let fold: Fold?
+        public let foldRange: NSRange?
+
+        public init(type: String, openBracket: NSRange, typeRange: NSRange,
+                    closeBracket: NSRange, fold: Fold? = nil, foldRange: NSRange? = nil) {
+            self.type = type
+            self.openBracket = openBracket
+            self.typeRange = typeRange
+            self.closeBracket = closeBracket
+            self.fold = fold
+            self.foldRange = foldRange
+        }
     }
 
     /// Matches a callout marker `[!type]` at the start of `firstLine` (a block
@@ -155,16 +189,25 @@ public enum Callout {
             range: NSRange(location: 0, length: ns.length)) else { return nil }
         let typeRange = m.range(at: 1)
         let type = ns.substring(with: typeRange).lowercased()
+        let foldRange = m.range(at: 2).location == NSNotFound ? nil : m.range(at: 2)
+        let fold: Marker.Fold?
+        switch foldRange.map({ ns.substring(with: $0) }) {
+        case "-": fold = .folded
+        case "+": fold = .expanded
+        default: fold = nil
+        }
         return Marker(
             type: type,
             openBracket: NSRange(location: typeRange.location - 2, length: 2),
             typeRange: typeRange,
-            closeBracket: NSRange(location: typeRange.upperBound, length: 1)
+            closeBracket: NSRange(location: typeRange.upperBound, length: 1),
+            fold: fold,
+            foldRange: foldRange
         )
     }
 
     /// `[!type]` at the very start of the line (optional leading spaces). The
     /// type is one or more letters/digits/`-`/`_` beginning with a letter.
     private static let markerRegex = try! NSRegularExpression(
-        pattern: #"^[ \t]*\[!([A-Za-z][A-Za-z0-9_-]*)\]"#)
+        pattern: #"^[ \t]*\[!([A-Za-z][A-Za-z0-9_-]*)\]([-+])?"#)
 }

@@ -288,8 +288,11 @@ extension EditorTextView {
         }
         let block = blocks[blockIndex]
         let localOffset = offset - block.range.location
-        guard let span = SyntaxHighlighter.parse(block.content,
-                                                 linkDefinitions: linkDefState.defsText).first(where: {
+        guard let span = SyntaxHighlighter.parse(
+            block.content,
+            linkDefinitions: linkDefState.defsText,
+            features: markdownFeatures
+        ).first(where: {
             guard $0.fullRange.location == localOffset else { return false }
             if case .image = $0.kind { return true }
             return false

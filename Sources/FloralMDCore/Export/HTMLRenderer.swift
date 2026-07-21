@@ -31,12 +31,22 @@ struct HTMLRenderer: MarkupVisitor {
     /// mailto) and in-page `#fragment` anchors keep their real hrefs.
     static let linkScheme = "x-floralmd-link"
 
+    /// Private URL scheme for read-mode code-copy actions. The native WebView
+    /// delegate decodes the payload and cancels navigation; exported HTML never
+    /// receives these controls.
+    static let copyScheme = "x-floralmd-copy"
+
     /// The markdown this instance is rendering. Held so block-level constructs
     /// (callouts) can recover their *raw* source text by range, the way the
     /// editor's styling layer does.
     private let source: String
     private let sourceLines: [String]
+    /// 1-based original source line for each line in `source`. Metadata blocks
+    /// are removed before swift-markdown parses, but navigation anchors must
+    /// continue to identify positions in the untouched raw document.
+    private let sourceLineMap: [Int]
     private let options: ReadRenderOptions
+    private let readModeCopyStrings: ReadModeCopyStrings?
 
     /// Footnote definitions collected while walking the document (see
     /// `visitParagraph`), rendered as a section at the bottom of the page
@@ -47,25 +57,66 @@ struct HTMLRenderer: MarkupVisitor {
     /// See `isTight(_:)`.
     private var listIsTight: [Bool] = []
 
-    private init(source: String, options: ReadRenderOptions) {
+    private init(source: String, sourceLineMap: [Int], options: ReadRenderOptions,
+                 readModeCopyStrings: ReadModeCopyStrings?) {
         self.source = source
         self.sourceLines = source.components(separatedBy: "\n")
+        self.sourceLineMap = sourceLineMap
         self.options = options
+        self.readModeCopyStrings = readModeCopyStrings
     }
 
     /// Parses `markdown` and returns the rendered HTML body (no `<html>`/`<head>`
     /// wrapper — `DocumentHTML` adds that).
-    static func render(markdown: String, options: ReadRenderOptions = .default) -> String {
-        var r = HTMLRenderer(source: markdown, options: options)
-        let doc = Document(parsing: markdown, options: [.disableSmartOpts])
+    static func render(markdown: String, options: ReadRenderOptions = .default,
+                       readModeCopyStrings: ReadModeCopyStrings? = nil) -> String {
+        let prepared = prepare(markdown, features: options.features)
+        var r = HTMLRenderer(source: prepared.source,
+                             sourceLineMap: prepared.originalLines,
+                             options: options,
+                             readModeCopyStrings: readModeCopyStrings)
+        let doc = Document(parsing: prepared.source, options: [.disableSmartOpts])
         let body = r.visit(doc)
         return body + r.renderFootnotesSection()
     }
 
+    private static func prepare(
+        _ markdown: String, features: MarkdownFeatures
+    ) -> (source: String, originalLines: [Int]) {
+        let lines = markdown.components(separatedBy: "\n")
+        let blocks = BlockParser.parse(markdown, features: features)
+        var removed = Set<Int>()
+        var placeholderLines = Set<Int>()
+        var startLine = 0
+        for block in blocks {
+            let lineCount = block.content.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+            if block.kind == .frontMatter || block.kind == .multiBlockComment {
+                removed.formUnion(startLine..<(startLine + lineCount))
+                // Keep one empty structural line so prose on either side does
+                // not merge into a single CommonMark paragraph after metadata
+                // is removed. It carries no source text or visible element.
+                placeholderLines.insert(startLine)
+            }
+            startLine += lineCount
+        }
+        var preparedLines: [String] = []
+        var originalLines: [Int] = []
+        for (index, line) in lines.enumerated() {
+            if placeholderLines.contains(index) {
+                preparedLines.append("")
+                originalLines.append(index + 1)
+            } else if !removed.contains(index) {
+                preparedLines.append(line)
+                originalLines.append(index + 1)
+            }
+        }
+        return (preparedLines.joined(separator: "\n"), originalLines)
+    }
+
     /// `[^id]: body` definitions render at the bottom of the page as a `<hr>` +
     /// ordered list, each entry linking back to its in-text reference — the
-    /// Obsidian-style footnote layout (see misc/backlog.md's Markdown Footnotes
-    /// entry). Not rendered at all if the document had no footnote definitions.
+    /// Obsidian-style footnote layout. Not rendered at all if the document had
+    /// no footnote definitions.
     private func renderFootnotesSection() -> String {
         guard !footnotes.isEmpty else { return "" }
         var out = "<hr class=\"footnotes-sep\"><ol class=\"footnotes\">"
@@ -129,7 +180,8 @@ struct HTMLRenderer: MarkupVisitor {
             index = html.index(after: index)
         }
         guard index > html.index(after: html.startIndex) else { return html }
-        return String(html[..<index]) + " id=\"floralmd-l\(line)\"" + String(html[index...])
+        let originalLine = sourceLineMap.indices.contains(line - 1) ? sourceLineMap[line - 1] : line
+        return String(html[..<index]) + " id=\"floralmd-l\(originalLine)\"" + String(html[index...])
     }
 
     /// The last source line at or before `line` (1-indexed) that has non-blank
@@ -166,7 +218,9 @@ struct HTMLRenderer: MarkupVisitor {
         // editor's styling reads from raw source by range for the same reason.
         let raw = sourceText(paragraph) ?? Self.plainText(of: paragraph)
         var dm: [SyntaxHighlighter.Span] = []
-        SyntaxHighlighter.parseDisplayMath(raw, into: &dm)
+        if options.features.contains(.math) {
+            SyntaxHighlighter.parseDisplayMath(raw, into: &dm)
+        }
         if let span = dm.first(where: { if case .math(true) = $0.kind { return true }; return false }) {
             let ns = raw as NSString
             let nonWhitespace = CharacterSet.whitespacesAndNewlines.inverted
@@ -184,9 +238,13 @@ struct HTMLRenderer: MarkupVisitor {
         // Text child) is a footnote definition, not visible content — collect it
         // for the bottom-of-page footnotes section instead of rendering in place.
         let children = Array(paragraph.children)
-        if let first = children.first as? Text,
+        if options.features.contains(.footnote),
+           let first = children.first as? Text,
            let (id, markerLength) = Self.footnoteDefinitionMarker(in: first.string) {
-            var bodyHTML = Self.renderInline(String(first.string.dropFirst(markerLength)))
+            var bodyHTML = Self.renderInline(
+                String(first.string.dropFirst(markerLength)),
+                features: options.features
+            )
             for child in children.dropFirst() { bodyHTML += visit(child) }
             footnotes.append((id: id, bodyHTML: bodyHTML))
             return ""
@@ -214,18 +272,50 @@ struct HTMLRenderer: MarkupVisitor {
             .replacingOccurrences(of: "\u{2029}", with: "\n")
         // swift-markdown includes a trailing newline on the block's code.
         let code = raw.hasSuffix("\n") ? String(raw.dropLast()) : raw
-        return "<pre><code\(lang)>\(Self.highlightCode(code, language: codeBlock.language))</code></pre>"
+        let pre = "<pre><code\(lang)>\(Self.highlightCode(code, language: codeBlock.language))</code></pre>"
+        let languageLabel = SyntaxDefinitionStore.shared.displayLabel(for: codeBlock.language)
+        let labelHTML = languageLabel.map {
+            "<span class=\"code-language-label\">\(Self.escape($0))</span>"
+        } ?? ""
+        let copyHTML = readModeCopyStrings.map {
+            Self.copyButtonHTML(code: code, strings: $0)
+        } ?? ""
+        guard languageLabel != nil || readModeCopyStrings != nil else { return pre }
+        let controls = "<div class=\"code-block-controls\">\(labelHTML)\(copyHTML)</div>"
+        return "<div class=\"code-block-wrap has-controls\">\(controls)\(pre)</div>"
+    }
+
+    private static func copyButtonHTML(code: String, strings: ReadModeCopyStrings) -> String {
+        let buttonID = UUID()
+        let base64 = Data(code.utf8).base64EncodedString()
+        let encoded = base64.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? base64
+        let href = "\(copyScheme):\(buttonID.uuidString):\(encoded)"
+        let copyIcon = LucideIcons.inlineSVG("copy") ?? ""
+        let checkIcon = LucideIcons.inlineSVG("check") ?? ""
+        return "<a id=\"floralmd-copy-\(buttonID.uuidString)\" "
+            + "class=\"code-copy-btn code-copy-icon\" role=\"button\" href=\"\(attr(href))\" "
+            + "aria-label=\"\(attr(strings.copyCode))\" title=\"\(attr(strings.copyCode))\" "
+            + "data-copy-label=\"\(attr(strings.copyCode))\" "
+            + "data-copied-label=\"\(attr(strings.copied))\" "
+            + "data-copy-announcement=\"\(attr(strings.announcement))\">"
+            + "<span class=\"code-copy-default\" aria-hidden=\"true\">\(copyIcon)</span>"
+            + "<span class=\"code-copy-confirmation\" aria-hidden=\"true\">\(checkIcon)"
+            + "<span>\(escape(strings.copied))</span></span></a>"
+            + "<span class=\"code-copy-status\" role=\"status\" aria-live=\"polite\"></span>"
     }
 
     /// CSS class for a code token kind (consumed by `HTMLTheme`'s `.tok-*` rules).
     private static func tokenClass(_ type: CodeHighlighter.TokenType) -> String {
         switch type {
-        case .keyword:  return "tok-keyword"
-        case .type:     return "tok-type"
-        case .string:   return "tok-string"
-        case .number:   return "tok-number"
-        case .comment:  return "tok-comment"
-        case .function: return "tok-function"
+        case .keyword:   return "tok-keyword"
+        case .command:   return "tok-command"
+        case .type:      return "tok-type"
+        case .attribute: return "tok-attribute"
+        case .variable:  return "tok-variable"
+        case .value:     return "tok-value"
+        case .number:    return "tok-number"
+        case .string:    return "tok-string"
+        case .comment:   return "tok-comment"
         }
     }
 
@@ -259,9 +349,10 @@ struct HTMLRenderer: MarkupVisitor {
     mutating func visitBlockQuote(_ blockQuote: BlockQuote) -> String {
         // Detect a GFM callout (`> [!type] …`) on the first line, the same way
         // the editor does (Callout.parseMarker over the de-quoted first line).
-        if let inner = deQuoted(blockQuote) {
+        if options.features.contains(.callout), let inner = deQuoted(blockQuote) {
             let firstLine = String(inner.prefix(while: { $0 != "\n" }))
             if let marker = Callout.parseMarker(firstLine),
+               Callout.isEnabled(marker.type, features: options.features),
                let style = Callout.style(for: marker.type) {
                 return renderCallout(marker: marker, style: style,
                                      firstLine: firstLine, blockQuote: blockQuote)
@@ -312,7 +403,9 @@ struct HTMLRenderer: MarkupVisitor {
             let mark = "<span class=\"task-check task-check--\(checked ? "checked" : "unchecked")\">"
                 + "\(LucideIcons.checkboxSVG(checked: checked))</span>"
             let checkedClass = checked ? " task--checked" : ""
-            return "<li class=\"task\(checkedClass)\">\(mark)\(renderListItemContents(listItem))</li>"
+            let content = renderListItemContents(listItem)
+            return "<li class=\"task\(checkedClass)\">\(mark)" +
+                   "<div class=\"task-content\">\(content)</div></li>"
         }
         return "<li>\(renderListItemContents(listItem))</li>"
     }
@@ -364,7 +457,7 @@ struct HTMLRenderer: MarkupVisitor {
     // MARK: Inline
 
     mutating func visitText(_ text: Text) -> String {
-        Self.renderInline(text.string, rawSource: sourceText(text))
+        Self.renderInline(text.string, rawSource: sourceText(text), features: options.features)
     }
     mutating func visitEmphasis(_ emphasis: Emphasis) -> String { "<em>\(renderChildren(of: emphasis))</em>" }
     mutating func visitStrong(_ strong: Strong) -> String { "<strong>\(renderChildren(of: strong))</strong>" }
@@ -407,7 +500,10 @@ struct HTMLRenderer: MarkupVisitor {
         // inlines it in a second pass (it needs the document directory + the
         // remote-image policy, which the pure renderer doesn't have). No `src`
         // here ⇒ if the asset pass can't resolve it, the alt text shows.
-        let displaySize = ImageReference.displaySize(in: Self.plainText(of: image))
+        let rawAlt = Self.plainText(of: image)
+        let displaySize = options.features.contains(.imageDimensions)
+            ? ImageReference.displaySize(in: rawAlt)
+            : ImageReference.DisplaySize(altText: rawAlt, width: nil, height: nil)
         let alt = Self.attr(displaySize.altText)
         let src = Self.attr(image.source ?? "")
         let width = displaySize.width.map { " width=\"\($0)\"" } ?? ""
@@ -548,8 +644,12 @@ struct HTMLRenderer: MarkupVisitor {
                                         firstLine: String, blockQuote: BlockQuote) -> String {
         // Custom title = whatever follows `]` on the first line.
         let ns = firstLine as NSString
-        let afterMarker = marker.closeBracket.upperBound <= ns.length
-            ? ns.substring(from: marker.closeBracket.upperBound)
+        let fold = options.features.contains(.collapsibleCallout) ? marker.fold : nil
+        let markerEnd = fold == nil
+            ? marker.closeBracket.upperBound
+            : (marker.foldRange?.upperBound ?? marker.closeBracket.upperBound)
+        let afterMarker = markerEnd <= ns.length
+            ? ns.substring(from: markerEnd)
             : ""
         let title = Callout.title(type: marker.type, customTitle: afterMarker)
 
@@ -568,21 +668,32 @@ struct HTMLRenderer: MarkupVisitor {
             .map(Self.deQuoteLine).joined(separator: "\n")
         let bodyHTML = body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? ""
-            : HTMLRenderer.render(markdown: body, options: options)
+            : HTMLRenderer.render(markdown: body, options: options,
+                                  readModeCopyStrings: readModeCopyStrings)
 
         // Inline the Lucide icon directly (vector, sharp in PDF). It strokes in
         // `currentColor`, so the `.callout-title` accent color tints it — no
         // per-appearance asset pass, and no SF Symbol shipped in the export.
         let icon = "<span class=\"callout-icon\">\(LucideIcons.inlineSVG(style.iconName) ?? "")</span>"
-        let calloutHTML = "<div class=\"callout callout-\(Self.attr(marker.type))\">"
-            + "<div class=\"callout-title\">\(icon)<span class=\"callout-title-text\">\(Self.escape(title))</span></div>"
-            + "<div class=\"callout-body\">\(bodyHTML)</div></div>"
+        let titleInner = "\(icon)<span class=\"callout-title-text\">\(Self.escape(title))</span>"
+        let calloutHTML: String
+        if let fold {
+            let open = fold == .expanded ? " open" : ""
+            calloutHTML = "<details class=\"callout callout-\(Self.attr(marker.type)) callout-collapsible\"\(open)>"
+                + "<summary class=\"callout-title\">\(titleInner)</summary>"
+                + "<div class=\"callout-body\">\(bodyHTML)</div></details>"
+        } else {
+            calloutHTML = "<div class=\"callout callout-\(Self.attr(marker.type))\">"
+                + "<div class=\"callout-title\">\(titleInner)</div>"
+                + "<div class=\"callout-body\">\(bodyHTML)</div></div>"
+        }
 
         // Lazy tail (bare lines swift-markdown folded in) → sibling markdown.
         let tail = rawLines[quotedCount...].joined(separator: "\n")
         let tailHTML = tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? ""
-            : HTMLRenderer.render(markdown: tail, options: options)
+            : HTMLRenderer.render(markdown: tail, options: options,
+                                  readModeCopyStrings: readModeCopyStrings)
         return calloutHTML + tailHTML
     }
 
@@ -622,15 +733,24 @@ struct HTMLRenderer: MarkupVisitor {
     /// (`\\`→`\`, `\$`→`$`), which mangles LaTeX (a `\begin{cases} … \\ … \end`
     /// loses its row separators). The tex is therefore recovered from the raw
     /// source instead. Everything else stays on the (correctly unescaped) `s`.
-    private static func renderInline(_ s: String, rawSource: String? = nil) -> String {
+    private static func renderInline(_ s: String, rawSource: String? = nil,
+                                     features: MarkdownFeatures = .all) -> String {
         guard !s.isEmpty else { return "" }
         var spans: [SyntaxHighlighter.Span] = []
-        SyntaxHighlighter.parseHighlight(s, into: &spans)
-        SyntaxHighlighter.parseDisplayMath(s, into: &spans)
-        SyntaxHighlighter.parseMath(s, into: &spans)        // inline $…$ only
-        SyntaxHighlighter.parseWikiLinks(s, into: &spans)
-        SyntaxHighlighter.parseComments(s, into: &spans)
-        SyntaxHighlighter.parseFootnotes(s, into: &spans)   // references only; a
+        if features.contains(.highlight) { SyntaxHighlighter.parseHighlight(s, into: &spans) }
+        if features.contains(.math) {
+            SyntaxHighlighter.parseDisplayMath(s, into: &spans)
+            SyntaxHighlighter.parseMath(s, into: &spans)        // inline $…$ only
+        }
+        if features.contains(.wikilink) || features.contains(.wikilinkEmbed) {
+            SyntaxHighlighter.parseWikiLinks(s, into: &spans, features: features)
+        }
+        if features.contains(.tag) { SyntaxHighlighter.parseTags(s, into: &spans) }
+        if features.contains(.blockID) { SyntaxHighlighter.parseBlockID(s, into: &spans) }
+        if features.contains(.inlineComment) || features.contains(.multiBlockComment) {
+            SyntaxHighlighter.parseComments(s, into: &spans, features: features)
+        }
+        if features.contains(.footnote) { SyntaxHighlighter.parseFootnotes(s, into: &spans) }   // references only; a
         // `.footnoteDefinition` match here is a false positive (mid-run text that
         // happens to start with `[^id]:`) since real definitions are handled at
         // the paragraph level in `visitParagraph` — ignored by the switch below.
@@ -642,8 +762,8 @@ struct HTMLRenderer: MarkupVisitor {
         // Keep only the kinds we emit, ordered, non-overlapping (earliest wins).
         let relevant = spans.filter {
             switch $0.kind {
-            case .highlight, .math, .wikilink, .comment, .footnoteReference,
-                 .link: return true
+            case .highlight, .math, .wikilink, .embed, .tag, .blockID,
+                 .comment, .footnoteReference, .link: return true
             default: return false
             }
         }.sorted { $0.fullRange.location < $1.fullRange.location }
@@ -702,6 +822,18 @@ struct HTMLRenderer: MarkupVisitor {
                 let encoded = target.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? target
                 let display = escape(ns.substring(with: span.contentRange))
                 out += "<a class=\"wikilink\" href=\"\(wikiScheme):\(encoded)\">\(display)</a>"
+            case .embed(let target, let kind):
+                let label = attr(kind.accessibilityLabel(target: target))
+                out += "<span class=\"embed-label embed-label-\(kind.rawValue)\" " +
+                       "role=\"group\" " +
+                       "data-attachment-kind=\"\(kind.rawValue)\" " +
+                       "data-attachment-label=\"\(attr(kind.bilingualLabel))\" " +
+                       "aria-label=\"\(label)\">" +
+                       "\(escape(ns.substring(with: span.contentRange)))</span>"
+            case .tag:
+                out += "<span class=\"tag\">\(escape(ns.substring(with: span.fullRange)))</span>"
+            case .blockID:
+                break
             case .footnoteReference(let id):
                 let safeID = attr(id)
                 out += "<sup id=\"fnref-\(safeID)\" class=\"footnote-ref\">" +

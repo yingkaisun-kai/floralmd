@@ -16,17 +16,18 @@ import Markdown
 ///      the recompose engine restyles.
 public enum BlockParser {
 
-    public static func parse(_ text: String, previous: [Block] = []) -> [Block] {
-        parseWithDiff(text, previous: previous).blocks
+    public static func parse(_ text: String, previous: [Block] = [],
+                             features: MarkdownFeatures = .all) -> [Block] {
+        parseWithDiff(text, previous: previous, features: features).blocks
     }
 
     /// Parses `text` and returns the blocks plus the changed window: the range
     /// of indices (in the new list) outside the unchanged prefix/suffix.
     public static func parseWithDiff(
-        _ text: String, previous: [Block] = []
+        _ text: String, previous: [Block] = [], features: MarkdownFeatures = .all
     ) -> (blocks: [Block], changed: Range<Int>) {
         let nsText = text as NSString
-        let paragraphs = splitParagraphs(text)
+        let paragraphs = splitParagraphs(text, features: features)
 
         var blocks: [Block] = []
         blocks.reserveCapacity(paragraphs.count)
@@ -69,7 +70,8 @@ public enum BlockParser {
         text: String,
         old: [Block],
         editedOldRange: NSRange,
-        delta: Int
+        delta: Int,
+        features: MarkdownFeatures = .all
     ) -> (blocks: [Block], changed: Range<Int>)? {
         guard !old.isEmpty else { return nil }
         let newLength = (text as NSString).length
@@ -128,7 +130,8 @@ public enum BlockParser {
             }
 
             guard let (content, kind, next) = consumeBlock(&buf, at: lineIndex,
-                                                           prevLine: prevLine) else {
+                                                           prevLine: prevLine,
+                                                           features: features) else {
                 break   // end of document: the window runs to the end
             }
             let length = (content as NSString).length
@@ -268,9 +271,26 @@ public enum BlockParser {
     /// start) — the only backward context any rule uses: an indented code
     /// block may start only after a blank line. Returns the block's
     /// content/kind and the index of the line after it.
-    static func consumeBlock(_ buf: inout LineBuffer, at i: Int, prevLine: String?)
+    static func consumeBlock(_ buf: inout LineBuffer, at i: Int, prevLine: String?,
+                             features: MarkdownFeatures = .all)
         -> (content: String, kind: BlockKind, next: Int)? {
         guard let first = buf.line(at: i) else { return nil }
+
+        // YAML front matter is recognized only at the physical start of the
+        // document. An unterminated opening `---` remains an ordinary thematic
+        // break so typing the opener does not swallow the rest of the file.
+        if features.contains(.frontMatter), i == 0, prevLine == nil,
+           first.trimmingCharacters(in: .whitespaces) == "---" {
+            var merged = [first]
+            var j = i + 1
+            while let line = buf.line(at: j) {
+                merged.append(line)
+                j += 1
+                if line.trimmingCharacters(in: .whitespaces) == "---" {
+                    return (merged.joined(separator: "\n"), .frontMatter, j)
+                }
+            }
+        }
 
         // Detect opening code fence
         if let fence = codeFenceInfo(first) {
@@ -301,6 +321,20 @@ public enum BlockParser {
             return (merged.joined(separator: "\n"), .mathDisplay, j)
         }
 
+        // Obsidian multi-block comments begin on a line whose first visible
+        // token is `%%` and finish on the first subsequent line containing a
+        // closing `%%`. Same-line comments stay ordinary inline spans.
+        if features.contains(.multiBlockComment), opensMultiBlockComment(first) {
+            var merged = [first]
+            var j = i + 1
+            while let line = buf.line(at: j) {
+                merged.append(line)
+                j += 1
+                if line.contains("%%") { break }
+            }
+            return (merged.joined(separator: "\n"), .multiBlockComment, j)
+        }
+
         // A list item can open display math after its marker (`1. $$…`). Merge
         // through the closing delimiter so the renderer receives one block and
         // can form a single display-math span.
@@ -324,7 +358,7 @@ public enum BlockParser {
             // can't be pulled into a prior callout's paragraph (GFM ex. 228).
             // Read mode matches this (HTMLRenderer.renderCallout splits at the
             // first non-`>` line).
-            if quoteRunOpensCallout(first) {
+            if quoteRunOpensCallout(first, features: features) {
                 var merged = [first]
                 var j = i + 1
                 while let line = buf.line(at: j), isBlockquoteLine(line) {
@@ -517,14 +551,16 @@ public enum BlockParser {
     /// Splits text into paragraphs on single newlines, merging fenced code blocks
     /// and table rows into single multi-line blocks. Each paragraph is tagged
     /// with its `BlockKind`.
-    private static func splitParagraphs(_ text: String) -> [(content: String, kind: BlockKind)] {
+    private static func splitParagraphs(_ text: String, features: MarkdownFeatures = .all)
+        -> [(content: String, kind: BlockKind)] {
         if text.isEmpty { return [("", .blank)] }
 
         var buf = LineBuffer(text)
         var result: [(content: String, kind: BlockKind)] = []
         var i = 0
         var prevLine: String? = nil
-        while let (content, kind, next) = consumeBlock(&buf, at: i, prevLine: prevLine) {
+        while let (content, kind, next) = consumeBlock(&buf, at: i, prevLine: prevLine,
+                                                       features: features) {
             result.append((content, kind))
             i = next
             prevLine = lastLine(of: content)
@@ -563,6 +599,12 @@ public enum BlockParser {
         if isThematicBreakLine(line) { return .thematicBreak }
         if isListLine(line) { return .listItem }
         return .paragraph
+    }
+
+    private static func opensMultiBlockComment(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("%%") else { return false }
+        return !trimmed.dropFirst(2).contains("%%")
     }
 
     /// Returns true if the line is a bullet (`- `, `* `, `+ `) or ordered
@@ -734,10 +776,14 @@ public enum BlockParser {
 
     /// Returns true if the first line of a quote run opens a callout
     /// (`> [!type]`, known or unknown type).
-    private static func quoteRunOpensCallout(_ firstLine: String) -> Bool {
+    private static func quoteRunOpensCallout(
+        _ firstLine: String,
+        features: MarkdownFeatures = .all
+    ) -> Bool {
         let trimmed = firstLine.drop(while: { $0 == " " })
         guard trimmed.first == ">" else { return false }
-        return Callout.parseMarker(String(trimmed.dropFirst())) != nil
+        guard let marker = Callout.parseMarker(String(trimmed.dropFirst())) else { return false }
+        return Callout.isEnabled(marker.type, features: features)
     }
 
     /// If the line (after optional leading whitespace) starts with `$$`, returns

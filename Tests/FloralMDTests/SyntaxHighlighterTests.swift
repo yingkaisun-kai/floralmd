@@ -171,7 +171,8 @@ struct HeadingTests {
     @Test("# without space is not a heading")
     func noSpace() {
         let spans = SyntaxHighlighter.parse("#notaheading")
-        #expect(spans.isEmpty)
+        #expect(!spans.contains { if case .heading = $0.kind { return true }; return false })
+        #expect(spans.contains { $0.kind == .tag(name: "notaheading") })
     }
 
     @Test("Setext === underline: content is the first line, delimiter the underline")

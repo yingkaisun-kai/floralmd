@@ -60,16 +60,84 @@ extension SyntaxHighlighter {
         }
     }
 
+    private static let tagRegex = try! NSRegularExpression(
+        pattern: #"(?:^|(?<=\s))#([\p{L}\p{M}\p{N}_/-]*[\p{L}\p{M}_/-][\p{L}\p{M}\p{N}_/-]*)"#
+    )
+
+    /// Parses Obsidian tags at a line/whitespace boundary. Tags may be nested
+    /// with `/`, may contain Unicode letters, and must contain at least one
+    /// non-digit so `#123` remains literal and `# heading` remains an ATX marker.
+    static func parseTags(_ text: String, into spans: inout [Span]) {
+        let ns = text as NSString
+        let whole = NSRange(location: 0, length: ns.length)
+        for match in tagRegex.matches(in: text, range: whole) {
+            let full = match.range(at: 0)
+            let enclosedByOpaqueSyntax = spans.contains { existing in
+                switch existing.kind {
+                case .code, .codeBlock, .math, .link, .image, .wikilink, .comment:
+                    return existing.fullRange.location <= full.location
+                        && existing.fullRange.upperBound >= full.upperBound
+                default:
+                    return false
+                }
+            }
+            guard !enclosedByOpaqueSyntax else { continue }
+            spans.append(Span(
+                kind: .tag(name: ns.substring(with: match.range(at: 1))),
+                fullRange: full,
+                contentRange: full,
+                delimiterRanges: []
+            ))
+        }
+    }
+
+    private static let blockIDRegex = try! NSRegularExpression(
+        pattern: #"(?:^|\s)(\^[\p{L}\p{M}\p{N}-]+)[ \t]*$"#
+    )
+
+    /// Parses a trailing Obsidian block ID. The token is source metadata: it is
+    /// dimmed while editing and hidden in rendered Edit/Read presentations.
+    static func parseBlockID(_ text: String, into spans: inout [Span]) {
+        let ns = text as NSString
+        let whole = NSRange(location: 0, length: ns.length)
+        guard let match = blockIDRegex.firstMatch(in: text, range: whole) else { return }
+        let token = match.range(at: 1)
+        let enclosedByOpaqueSyntax = spans.contains { existing in
+            switch existing.kind {
+            case .code, .codeBlock, .math, .link, .image, .wikilink, .comment:
+                return existing.fullRange.location <= token.location
+                    && existing.fullRange.upperBound >= token.upperBound
+            default:
+                return false
+            }
+        }
+        guard !enclosedByOpaqueSyntax else { return }
+        spans.append(Span(
+            kind: .blockID(id: ns.substring(with: NSRange(
+                location: token.location + 1,
+                length: token.length - 1
+            ))),
+            fullRange: token,
+            contentRange: NSRange(location: token.location, length: 0),
+            delimiterRanges: [token]
+        ))
+    }
+
     private static let commentRegex =
         try! NSRegularExpression(pattern: "%%([\\s\\S]*?)%%", options: [])
 
     /// Parses Obsidian-style `%%comment%%` spans (not supported by
     /// swift-markdown). Matches across newlines within a block; skips `%%`
     /// inside code spans / code blocks.
-    static func parseComments(_ text: String, into spans: inout [Span]) {
+    static func parseComments(
+        _ text: String, into spans: inout [Span], features: MarkdownFeatures = .all
+    ) {
         let ns = text as NSString
         for m in commentRegex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             let full = m.range(at: 0)
+            let multiline = ns.substring(with: full).contains("\n")
+            guard (multiline && features.contains(.multiBlockComment))
+                    || (!multiline && features.contains(.inlineComment)) else { continue }
             let overlaps = spans.contains { existing in
                 switch existing.kind {
                 case .code, .codeBlock: break
@@ -117,18 +185,23 @@ extension SyntaxHighlighter {
     }
 
     private static let wikiLinkRegex =
-        try! NSRegularExpression(pattern: #"\[\[([^\[\]\n]+?)\]\]"#)
+        try! NSRegularExpression(pattern: #"(!)?\[\[([^\[\]\n]+?)\]\]"#)
+    private static let embeddedImageExtensions: Set<String> = [
+        "avif", "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"
+    ]
 
     /// Parses Obsidian-style `[[target]]`, `[[target#heading]]`, and
     /// `[[target|alias]]` internal links. The span's `contentRange` is the
     /// visible display text (the alias when present, else the target); the
     /// `[[`, an optional `target|`, and the `]]` are delimiter ranges hidden
     /// when rendered. Skips `[[` inside code spans / code blocks.
-    static func parseWikiLinks(_ text: String, into spans: inout [Span]) {
+    static func parseWikiLinks(_ text: String, into spans: inout [Span],
+                               features: MarkdownFeatures = .all) {
         let ns = text as NSString
         for m in wikiLinkRegex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             let full = m.range(at: 0)
-            let inner = m.range(at: 1)
+            let bang = m.range(at: 1)
+            let inner = m.range(at: 2)
             let innerNS = ns.substring(with: inner) as NSString
             guard innerNS.length > 0 else { continue }
             let overlaps = spans.contains { existing in
@@ -140,6 +213,16 @@ extension SyntaxHighlighter {
                     && existing.fullRange.upperBound >= full.upperBound
             }
             guard !overlaps else { continue }
+
+            let isEmbed = bang.location != NSNotFound
+            if isEmbed {
+                // Phase 2 classifies image and non-image embeds. Until that
+                // semantic span is appended, do not let `![[...]]` degrade into
+                // a clickable wikilink or consume the leading exclamation mark.
+                guard features.contains(.wikilinkEmbed) else { continue }
+            } else {
+                guard features.contains(.wikilink) else { continue }
+            }
 
             // Split target | alias on the first "|".
             let pipe = innerNS.range(of: "|")
@@ -157,12 +240,43 @@ extension SyntaxHighlighter {
             let content = NSRange(location: inner.location + displayRel.location, length: displayRel.length)
             let leading = NSRange(location: full.location, length: content.location - full.location)
             let trailing = NSRange(location: content.upperBound, length: full.upperBound - content.upperBound)
+            if isEmbed {
+                let path = target.split(separator: "#", maxSplits: 1).first.map(String.init) ?? target
+                if embeddedImageExtensions.contains((path as NSString).pathExtension.lowercased()) {
+                    let dimensions = features.contains(.imageDimensions)
+                        ? parseEmbeddedImageDimensions(innerNS, pipe: pipe) : (nil, nil)
+                    spans.append(Span(
+                        kind: .image(destination: target, width: dimensions.0, height: dimensions.1),
+                        fullRange: full,
+                        contentRange: content,
+                        delimiterRanges: [leading, trailing]))
+                } else {
+                    spans.append(Span(
+                        kind: .embed(target: target, kind: .classify(target: target)),
+                        fullRange: full,
+                        contentRange: content,
+                        delimiterRanges: [leading, trailing]))
+                }
+                continue
+            }
             spans.append(Span(
                 kind: .wikilink(target: target),
                 fullRange: full,
                 contentRange: content,
                 delimiterRanges: [leading, trailing]))
         }
+    }
+
+    private static func parseEmbeddedImageDimensions(
+        _ inner: NSString, pipe: NSRange
+    ) -> (Int?, Int?) {
+        guard pipe.location != NSNotFound, pipe.upperBound < inner.length else { return (nil, nil) }
+        let raw = inner.substring(from: pipe.upperBound).trimmingCharacters(in: .whitespaces)
+        let pieces = raw.lowercased().split(separator: "x", omittingEmptySubsequences: false)
+        guard let width = Int(pieces[0]), width > 0 else { return (nil, nil) }
+        if pieces.count == 1 { return (width, nil) }
+        guard pieces.count == 2, let height = Int(pieces[1]), height > 0 else { return (nil, nil) }
+        return (width, height)
     }
 
     /// Parses ==highlight== spans using regex (not supported by swift-markdown).

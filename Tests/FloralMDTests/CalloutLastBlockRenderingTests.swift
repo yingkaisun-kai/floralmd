@@ -10,11 +10,9 @@ import AppKit
 /// into the *preceding* layout fragment rather than giving it its own — it
 /// appears as a trailing zero-length line fragment. The callout's last-line
 /// `DecoratedTextLayoutFragment` then had its box fill the full frame height,
-/// flooding the callout color onto that trailing line (the reported
-/// "extra colored line at the bottom" bug, misc/bug-repros/
-/// callout-extra-line-rendered-at-bottom.mov). The fill height must exclude
-/// the absorbed empty line, so it matches the same callout without a trailing
-/// newline.
+/// flooding the callout color onto that trailing line. The fill height must
+/// exclude the absorbed empty line, so it matches the same callout without a
+/// trailing newline.
 @Suite("Callout as last block — no extra colored line")
 struct CalloutLastBlockRenderingTests {
 

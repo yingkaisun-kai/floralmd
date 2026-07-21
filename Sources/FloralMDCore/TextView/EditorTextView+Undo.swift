@@ -123,7 +123,9 @@ extension EditorTextView {
         rawSource = snapshot.rawSource
         rebuildListIndentState()
         rebuildLinkDefState()
-        let (newBlocks, changed) = BlockParser.parseWithDiff(rawSource, previous: blocks)
+        let (newBlocks, changed) = BlockParser.parseWithDiff(
+            rawSource, previous: blocks, features: markdownFeatures
+        )
         blocks = newBlocks
 
         var dirty = IndexSet(integersIn: changed)

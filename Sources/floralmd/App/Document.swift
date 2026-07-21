@@ -450,6 +450,12 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         editor.updateContentInset()
         editor.allowRemoteImages = !AppSettings.blockExternalImages
         editor.typewriterModeEnabled = AppSettings.typewriterMode
+        editor.markdownFeatures = AppSettings.markdownFeatures
+        editor.codeBlockCopyStrings = readModeCopyStrings
+        editor.linkNavigationHint = AppCopy.text(
+            "Hold Command and click to follow link",
+            "按住 Command 点击跳转"
+        )
         editor.document = self
         editor.imagePasteHandler = { [weak self] in
             self?.handleClipboardImagePaste() ?? false
@@ -726,6 +732,11 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
     /// Refresh every document-owned label after the interface language changes.
     func refreshLocalizedInterface() {
+        editor.codeBlockCopyStrings = readModeCopyStrings
+        editor.linkNavigationHint = AppCopy.text(
+            "Hold Command and click to follow link",
+            "按住 Command 点击跳转"
+        )
         refreshWindowTitle()
         refreshSavePresentation()
         refreshViewModeButton()
@@ -736,6 +747,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         }
         refreshSidebarControlAppearance()
         refreshWindowPinningButtonAppearance()
+        refreshReadView()
     }
 
     func refreshShortcutPresentation() {
@@ -1910,7 +1922,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     /// Cross-file link following: scroll this document's editor to a heading
     /// once it's on screen (the content has already loaded in showWindows).
     func navigateToHeading(_ heading: String) {
-        editor?.scrollToHeading(heading)
+        editor?.scrollToWikiAnchor(heading)
     }
 
     // MARK: - Rename & Move (manual — NSDocument's built-in versions
@@ -2080,7 +2092,14 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
                 // Route internal navigation through the editor's link resolver
                 // (which resolves against this document's directory and opens via
                 // NSDocumentController) instead of navigating the webview.
-                v.onOpenWikiLink = { [weak self] in self?.editor.followWikiLink($0) }
+                v.onOpenWikiLink = { [weak self, weak v] target in
+                    guard let self else { return }
+                    if let line = self.editor.sourceLine(forPageLocalWikiTarget: target) {
+                        v?.setScrollPosition(line: line, fraction: 0)
+                    } else {
+                        self.editor.followWikiLink(target)
+                    }
+                }
                 v.onOpenInternalLink = { [weak self] in self?.editor.followLinkDestination($0) }
                 // Keep Edit visible until the HTML and its restored viewport are
                 // ready, then exchange the two surfaces once.
@@ -2103,7 +2122,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
                         theme: editor.theme,
                         callouts: mergedCallouts,
                         baseURL: documentDirectory,
-                        options: renderOptions)
+                        options: renderOptions,
+                        copyStrings: readModeCopyStrings)
         } else {
             if let read = readView, !read.isHidden {
                 // Capture the Read position while it is still visible. The
@@ -2155,7 +2175,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
                     theme: editor.theme,
                     callouts: mergedCallouts,
                     baseURL: documentDirectory,
-                    options: renderOptions)
+                    options: renderOptions,
+                    copyStrings: readModeCopyStrings)
     }
 
     /// The opened file's directory, used to resolve relative image paths for
@@ -2176,9 +2197,18 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     /// editor's own `maxContentWidthPoints` (already the cm setting converted via
     /// the window's screen PPI) so Read mode's column matches Edit mode's.
     private var renderOptions: ReadRenderOptions {
-        ReadRenderOptions(preserveBlankLines: AppSettings.renderBlankLinesAsBreaks,
+        ReadRenderOptions(features: AppSettings.markdownFeatures,
+                         preserveBlankLines: AppSettings.renderBlankLinesAsBreaks,
                          allowRemoteImages: !AppSettings.blockExternalImages,
                          maxContentWidthPoints: Double(editor.maxContentWidthPoints))
+    }
+
+    private var readModeCopyStrings: ReadModeCopyStrings {
+        ReadModeCopyStrings(
+            copyCode: AppCopy.text("Copy code", "复制代码"),
+            copied: AppCopy.text("Copied", "已复制"),
+            announcement: AppCopy.text("Code copied", "代码已复制")
+        )
     }
 
     // MARK: - Export / Print

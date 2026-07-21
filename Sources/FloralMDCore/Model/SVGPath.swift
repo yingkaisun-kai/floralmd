@@ -7,8 +7,7 @@ import Foundation
 // (`LucideIcons.geometry`). Exists so the editor can draw a callout icon as a
 // *stroked vector path* instead of an NSImage: drawing an image on a wrapping,
 // multi-line TextKit 2 layout fragment wedges that fragment's layout to a
-// single line, while shape drawing does not (see
-// docs/investigations/archives/callout-title-wrap-investigation.md). Supports exactly what the
+// single line, while shape drawing does not. Supports exactly what the
 // vendored geometry uses: `<path>`, `<circle>`, and `<rect>` elements, and the
 // full SVG path-data command set. Coordinates stay in the icons' 24×24,
 // y-down viewBox space; callers scale to the target size.

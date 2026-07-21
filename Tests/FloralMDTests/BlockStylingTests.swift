@@ -559,8 +559,8 @@ struct CodeBlockActiveTests {
 @Suite("Integration — Code Block (Non-Active Block)")
 struct CodeBlockNonActiveTests {
 
-    @Test("Non-active code block shows raw text, fences are dimmed")
-    @MainActor func nonActiveFencesDimmed() {
+    @Test("Non-active code block keeps raw text while fence ink is hidden")
+    @MainActor func nonActiveFenceInkHidden() {
         let editor = makeEditor()
         editor.loadContent("```\nhello\n```\nother")
         activateBlock(1, in: editor)
@@ -568,9 +568,11 @@ struct CodeBlockNonActiveTests {
         // Text storage has the raw text
         let text = displayText(for: 0, in: editor)
         #expect(text == "```\nhello\n```")
-        // Fences dimmed
+        // The raw fence stays in storage at full line height, but rendered
+        // blocks clear its ink to make room for optional language chrome.
         let color = fgColor(at: 0, in: editor)
-        #expect(color == NSColor.tertiaryLabelColor)
+        #expect(color == NSColor.clear)
+        #expect(attrs(at: 0, in: editor)[.codeBlockLanguageLabel] == nil)
     }
 
     @Test("Non-active code block content has monospace font")

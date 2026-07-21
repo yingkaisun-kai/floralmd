@@ -48,9 +48,45 @@ struct HTMLRendererCoreTests {
     @Test("Fenced code block keeps language class and escapes content")
     func codeBlock() {
         let out = html("```swift\nlet x = a < b && c > d\n```")
+        #expect(out.contains("<div class=\"code-block-wrap has-controls\">"))
+        #expect(out.contains("<div class=\"code-block-controls\"><span class=\"code-language-label\">Swift</span>"))
         #expect(out.contains("<pre><code class=\"language-swift\">"))
         #expect(out.contains("a &lt; b &amp;&amp; c &gt; d"))
         #expect(!out.contains("a < b"))
+    }
+
+    @Test("Interactive Read code blocks carry an accessible native-copy route")
+    func codeBlockCopyButton() {
+        let strings = ReadModeCopyStrings(
+            copyCode: "复制代码",
+            copied: "已复制",
+            announcement: "代码已复制"
+        )
+        let out = HTMLRenderer.render(
+            markdown: "```swift\nlet 文本 = \"#%<&\"\n```",
+            readModeCopyStrings: strings
+        )
+        #expect(out.contains("<div id=\"floralmd-l1\" class=\"code-block-wrap has-controls\">"))
+        #expect(out.contains("class=\"code-copy-btn code-copy-icon\""))
+        #expect(out.contains("id=\"floralmd-copy-"))
+        #expect(out.contains("role=\"button\""))
+        #expect(out.contains("aria-label=\"复制代码\""))
+        #expect(out.contains("data-copied-label=\"已复制\""))
+        #expect(out.contains("class=\"code-copy-confirmation\" aria-hidden=\"true\""))
+        #expect(out.contains("role=\"status\" aria-live=\"polite\""))
+        #expect(out.contains("<svg"))
+
+        let code = "let 文本 = \"#%<&\""
+        let base64 = Data(code.utf8).base64EncodedString()
+        let encoded = base64.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? base64
+        #expect(out.contains(":\(encoded)\""))
+
+        let exported = HTMLRenderer.render(markdown: "```\nplain\n```")
+        #expect(!exported.contains("code-copy-btn"))
+        #expect(HTMLRenderer.render(
+            markdown: "    indented",
+            readModeCopyStrings: strings
+        ).contains("code-copy-btn"))
     }
 
     @Test("Plain-text code blocks do not emit syntax token spans")
@@ -59,6 +95,17 @@ struct HTMLRendererCoreTests {
         #expect(out.contains("<pre><code class=\"language-text\">"))
         #expect(out.contains("验证 Habitat/SDA 和 target"))
         #expect(!out.contains("class=\"tok-"))
+        #expect(!out.contains("code-language-label"))
+    }
+
+    @Test("Read-mode language labels use canonical and escaped display names")
+    func codeBlockLanguageLabels() {
+        #expect(html("```py\nprint('hi')\n```").contains(
+            "<span class=\"code-language-label\">Python</span>"
+        ))
+        #expect(html("```future&lt;lang\nvalue\n```").contains(
+            "<span class=\"code-language-label\">future&lt;lang</span>"
+        ))
     }
 
     @Test("Unordered, ordered, and task lists")
@@ -70,6 +117,8 @@ struct HTMLRendererCoreTests {
         let task = html("- [ ] todo\n- [x] done")
         #expect(task.contains("<li class=\"task\"><span class=\"task-check task-check--unchecked\"><svg"))
         #expect(task.contains("<span class=\"task-check task-check--checked\"><svg"))
+        #expect(task.contains("<div class=\"task-content\">todo</div>"))
+        #expect(task.contains("<div class=\"task-content\">done</div>"))
     }
 
     @Test("A loose list (blank line between items) keeps <p> wrappers")
@@ -334,7 +383,7 @@ struct HTMLRendererInlineTests {
     // Regression: LaTeX environments carry `\\` row separators. swift-markdown's
     // Text nodes have Markdown backslash-escapes collapsed (`\\`→`\`), so the tex
     // must be recovered from the raw source or `\begin{cases}`/`\begin{aligned}`
-    // arrive mangled. (misc/bug-repros/math-env-read-mode.png)
+    // arrive mangled.
     @Test("Inline environment keeps its `\\\\` row separators in data-tex")
     func inlineEnvironmentRowSeparators() {
         let out = html("matrix $I_{ij}=\\begin{cases} 1 & i=j \\\\ 0 & i\\neq j \\end{cases}$ ok")

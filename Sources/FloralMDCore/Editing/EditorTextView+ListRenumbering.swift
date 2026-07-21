@@ -164,7 +164,7 @@ extension EditorTextView {
         let caretAfter = max(0, caretBefore + netDelta)
 
         rawSource = (rawSource as NSString).replacingCharacters(in: oldSpan, with: newText)
-        blocks = BlockParser.parse(rawSource, previous: blocks)
+        blocks = BlockParser.parse(rawSource, previous: blocks, features: markdownFeatures)
 
         // `recomposeReplacing` wipes the whole replaced span to base
         // attributes before restyling only the dirty blocks — every block in

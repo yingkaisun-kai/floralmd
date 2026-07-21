@@ -11,6 +11,56 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.7.10] — 2026-07-21
+
+### 中文
+
+#### 新增
+- 设置新增 Markdown 分类，可分别控制提示块、Wiki 链接与嵌入、标签、块 ID、注释、
+  YAML 前置元数据、高亮、脚注、数学公式和图片尺寸等扩展；编辑与阅读模式使用同一组
+  开关，关闭的语法会保持源码原样显示。
+- 围栏代码高亮新增 Bash、C、C++、CSS、Go、HTML、Java、JavaScript、JSON、
+  Python、Ruby、Rust、Swift、TypeScript 和 YAML 的内置定义，并支持在 FloralMD
+  的 Application Support 目录中用 JSON 文件覆盖或补充语言定义。
+- 编辑与阅读模式的围栏代码块现在使用一致的右上角语言标签和悬停复制按钮；复制后
+  会显示“已复制”反馈，并保持当前光标与选区不变。
+- 非图片 Wiki 嵌入现在会显示 PDF、音频、视频、Markdown 或其他附件的类型标签，
+  便于在无法直接预览时辨认内容。
+- 页内标题与块 ID 链接现在可在编辑和阅读模式中跳转；编辑模式会提示按住 Command
+  点击，并只在按键时切换为链接手型光标。
+
+#### 修复
+- 修复已加载的远程图片在重新渲染后可能被缓存逐出、再次下载或短暂消失的问题。
+- 修复阅读模式任务复选框与首行文字垂直错位，以及代码块语言标签、复制按钮和背景
+  在窄窗口或激活代码块中位置不一致的问题。
+
+### English
+
+#### Added
+- Settings now includes a Markdown section with independent controls for
+  callouts, wiki links and embeds, tags, block IDs, comments, YAML front matter,
+  highlights, footnotes, math, image dimensions, and other extensions. Edit and
+  Read modes share the same controls, and disabled syntax remains literal source.
+- Fenced-code highlighting now includes bundled definitions for Bash, C, C++,
+  CSS, Go, HTML, Java, JavaScript, JSON, Python, Ruby, Rust, Swift, TypeScript,
+  and YAML. JSON definitions in FloralMD's Application Support directory can
+  override or extend the bundled languages.
+- Fenced code blocks now use matching top-right language labels and hover copy
+  buttons in Edit and Read modes. Copying shows confirmation without moving the
+  current caret or selection.
+- Non-image wiki embeds now show type labels for PDF, audio, video, Markdown,
+  and other attachments when an inline preview is unavailable.
+- In-page heading and block-ID links now navigate in both Edit and Read modes.
+  Edit mode explains the Command-click gesture and only shows the pointing-hand
+  cursor while Command is held.
+
+#### Fixed
+- Fixed loaded remote images being evicted, downloaded again, or briefly
+  disappearing after a re-render.
+- Fixed Read-mode task checkboxes sitting out of line with their first text row,
+  and aligned code-language labels, copy buttons, and backgrounds in narrow or
+  active code blocks.
+
 ## [2026.7.9] — 2026-07-21
 
 ### 中文

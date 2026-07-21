@@ -16,6 +16,10 @@ public enum BlockKind: Equatable, Sendable {
     case listItem
     case thematicBreak
     case htmlBlock
+    /// YAML metadata bounded by `---` lines at the start of the document.
+    case frontMatter
+    /// A line-oriented Obsidian comment run bounded by `%%` markers.
+    case multiBlockComment
     case blank
 }
 

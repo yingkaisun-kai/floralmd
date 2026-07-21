@@ -9,6 +9,10 @@ extension NSAttributedString.Key {
     /// Stores a wikilink's raw `path#heading` target on its visible text so a
     /// cmd+click can resolve it to a file or in-document heading.
     static let editorWikiTarget = NSAttributedString.Key("EditorWikiTarget")
+    /// Stores the semantic category of a source-backed non-image attachment
+    /// label. The value is `AttachmentKind.rawValue`; no display characters are
+    /// inserted, so selection and source offsets remain unchanged.
+    static let editorAttachmentKind = NSAttributedString.Key("EditorAttachmentKind")
 }
 
 // MARK: - Word-Level Styling
@@ -45,6 +49,16 @@ extension EditorTextView {
     /// the system accent so links stay consistently blue across user accent preferences.
     var linkColor: NSColor { theme.linkBlueColor }
 
+    private func attachmentColor(_ kind: AttachmentKind) -> NSColor {
+        switch kind {
+        case .pdf: return .systemRed
+        case .audio: return .systemPurple
+        case .video: return .systemBlue
+        case .note: return .systemTeal
+        case .unknown: return .secondaryLabelColor
+        }
+    }
+
     /// Monospaced font for tables.
     var tableFont: NSFont { theme.monospaceFont() }
 
@@ -61,6 +75,54 @@ extension EditorTextView {
     /// Subtle background color for inline code spans.
     var inlineCodeBackground: NSColor {
         NSColor(calibratedWhite: 0.5, alpha: 0.1)
+    }
+
+    /// Fenced-code chrome mirrors Read mode's quiet #f4f4f4 / #2a2a2a
+    /// surfaces without introducing paragraph padding or changing line height.
+    private var codeBlockBackground: NSColor {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return NSColor(calibratedWhite: dark ? 0.165 : 0.957, alpha: 1)
+    }
+
+    private var codeBlockBorder: NSColor {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return NSColor(calibratedWhite: dark ? 0.255 : 0.865, alpha: 0.78)
+    }
+
+    /// Adds source-backed hover/copy metadata and a tiled background to a
+    /// fenced block. Every paragraph keeps its original metrics; only drawing
+    /// attributes are added, preserving raw offsets and active-block geometry.
+    private func styleFencedCodeChrome(_ result: NSMutableAttributedString,
+                                       span: SyntaxHighlighter.Span,
+                                       isActive: Bool) {
+        guard !span.delimiterRanges.isEmpty,
+              span.fullRange.length > 0,
+              span.fullRange.upperBound <= result.length,
+              span.contentRange.upperBound <= result.length else { return }
+
+        let code = (result.string as NSString).substring(with: span.contentRange)
+        let presentation = CodeBlockPresentation(code: code, isActive: isActive)
+        result.addAttribute(.codeBlockPresentation, value: presentation,
+                            range: span.fullRange)
+
+        let source = result.string as NSString
+        var cursor = span.fullRange.location
+        while cursor < span.fullRange.upperBound {
+            let line = NSIntersectionRange(
+                source.lineRange(for: NSRange(location: cursor, length: 0)),
+                span.fullRange
+            )
+            guard line.length > 0 else { break }
+            let next = line.upperBound
+            let decoration = BlockDecoration(.codeBlock(
+                background: codeBlockBackground,
+                borderColor: codeBlockBorder,
+                isFirst: line.location == span.fullRange.location,
+                isLast: next >= span.fullRange.upperBound
+            ))
+            result.addAttribute(.blockDecoration, value: decoration, range: line)
+            cursor = next
+        }
     }
 
     /// Paragraph style for thematic breaks. The raw dashes are hidden with a
@@ -125,11 +187,11 @@ extension EditorTextView {
              .heading, .blockquote(_), .footnoteReference, .escape:
             return true
         case .listItem, .table, .codeBlock, .thematicBreak, .footnoteDefinition, .comment,
-             .htmlTag, .htmlFormat:
+             .htmlTag, .htmlFormat, .tag, .blockID:
             // htmlTag: always colored source (brackets dimmed by the generic
             // pass). htmlFormat: handled explicitly in the delimiter loop.
             return false
-        case .wikilink:
+        case .wikilink, .embed:
             // The `[[`, optional `target|`, and `]]` are hidden when rendered,
             // dimmed when the cursor is inside (like other inline delimiters).
             return true
@@ -154,7 +216,8 @@ extension EditorTextView {
         let result = NSMutableAttributedString(string: markdown, attributes: baseAttributes)
         guard !markdown.isEmpty else { return result }
 
-        let spans = SyntaxHighlighter.parse(markdown, linkDefinitions: linkDefState.defsText)
+        let spans = SyntaxHighlighter.parse(markdown, linkDefinitions: linkDefState.defsText,
+                                            features: markdownFeatures)
 
         // The font already applied at `loc` — the enclosing heading's when
         // inside one, else the base body font. Inline spans derive their font
@@ -216,9 +279,21 @@ extension EditorTextView {
                 result.addAttribute(.backgroundColor, value: inlineCodeBackground, range: span.contentRange)
 
             case .codeBlock(let language):
-                guard span.contentRange.upperBound <= result.length else { continue }
-                result.addAttribute(.font, value: codeBlockFont, range: span.contentRange)
+                guard span.fullRange.upperBound <= result.length else { continue }
+                // Keep fence rows at the same monospace metrics as the code so
+                // revealing an active block never changes its line geometry.
+                result.addAttribute(.font, value: codeBlockFont, range: span.fullRange)
                 highlightCodeBlock(result, contentRange: span.contentRange, language: language)
+                styleFencedCodeChrome(result, span: span, isActive: cursorInToken)
+                if !cursorInToken,
+                   let label = SyntaxDefinitionStore.shared.displayLabel(for: language),
+                   let openingFence = span.delimiterRanges.first {
+                    let line = (markdown as NSString).lineRange(
+                        for: NSRange(location: openingFence.location, length: 0)
+                    )
+                    result.addAttribute(.codeBlockLanguageLabel, value: label,
+                                        range: NSIntersectionRange(line, span.fullRange))
+                }
 
             case .strikethrough:
                 guard span.contentRange.upperBound <= result.length else { continue }
@@ -253,6 +328,36 @@ extension EditorTextView {
                                     range: span.contentRange)
                 if !target.isEmpty {
                     result.addAttribute(.editorWikiTarget, value: target, range: span.contentRange)
+                }
+
+            case .embed(let target, let kind):
+                guard span.contentRange.upperBound <= result.length else { continue }
+                // A non-image embed is deliberately a source-backed label:
+                // no attachment or overlay, so wrapping and selection stay on
+                // the raw Markdown character stream. Category metadata and a
+                // bilingual tooltip communicate that this is not a preview.
+                let color = attachmentColor(kind)
+                result.addAttribute(.foregroundColor, value: color, range: span.contentRange)
+                result.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.12),
+                                    range: span.contentRange)
+                result.addAttribute(.editorAttachmentKind, value: kind.rawValue,
+                                    range: span.contentRange)
+                result.addAttribute(.toolTip, value: kind.accessibilityLabel(target: target),
+                                    range: span.contentRange)
+
+            case .tag:
+                guard span.fullRange.upperBound <= result.length else { continue }
+                result.addAttribute(.foregroundColor, value: linkColor, range: span.fullRange)
+                result.addAttribute(.backgroundColor, value: linkColor.withAlphaComponent(0.12),
+                                    range: span.fullRange)
+
+            case .blockID:
+                guard span.fullRange.upperBound <= result.length else { continue }
+                if hideComments {
+                    result.addAttribute(.font, value: hiddenFont, range: span.fullRange)
+                    result.addAttribute(.foregroundColor, value: NSColor.clear, range: span.fullRange)
+                } else {
+                    result.addAttribute(.foregroundColor, value: syntaxDimColor, range: span.fullRange)
                 }
 
             case .image(let destination, let width, let height):
@@ -295,7 +400,9 @@ extension EditorTextView {
                 // ever detects as a callout: a callout nested inside a plain
                 // quote stays literal (see SyntaxHighlighter+Walker's
                 // visitBlockQuote), so no deeper span is ever callout-shaped.
-                if let callout = calloutInfo(forBlockquote: span, markdown: markdown), !cursorInToken {
+                if markdownFeatures.contains(.callout),
+                   let callout = calloutInfo(forBlockquote: span, markdown: markdown),
+                   !cursorInToken {
                     styleCalloutContent(result, span: span, info: callout)
                 } else {
                     // Plain block quote (any nesting depth). Indent and draw
@@ -585,6 +692,14 @@ extension EditorTextView {
                         result.addAttribute(.foregroundColor, value: syntaxDimColor, range: dr)
                     }
                     // Non-active: already hidden, don't override
+                } else if case .codeBlock = span.kind {
+                    // Rendered fenced blocks keep both fence rows as real,
+                    // full-height text but clear their ink. This preserves raw
+                    // offsets and caret/line geometry while leaving a quiet
+                    // header row for the optional language label.
+                    result.addAttribute(.foregroundColor,
+                                        value: cursorInToken ? syntaxDimColor : NSColor.clear,
+                                        range: dr)
                 } else if case .table = span.kind {
                     // Table delimiters (separator row): dimmed when active, hidden when not
                     if cursorInToken {
@@ -734,6 +849,35 @@ extension EditorTextView {
         ])
     }
 
+    private func metadataStyled(_ markdown: String, hidden: Bool) -> NSAttributedString {
+        let mono = theme.monospaceFont(ofSize: bodyFont.pointSize)
+        let ps = NSMutableParagraphStyle()
+        ps.lineSpacing = theme.lineSpacing
+        return NSAttributedString(string: markdown, attributes: [
+            .font: hidden ? hiddenFont : mono,
+            .foregroundColor: hidden ? NSColor.clear : syntaxDimColor,
+            .paragraphStyle: ps,
+        ])
+    }
+
+    /// Single source of truth for choosing a block's presentation. Incremental
+    /// restyling and the full-recompose oracle both call this entry point so a
+    /// metadata block cannot take different paths after an edit versus a load.
+    func styledBlock(_ block: Block, cursorInBlock: Int? = nil) -> NSAttributedString {
+        switch viewMode {
+        case .edit:
+            return block.kind == .frontMatter
+                ? metadataStyled(block.content, hidden: false)
+                : styleBlock(block.content, cursorPosition: cursorInBlock)
+        case .reading:
+            return block.kind == .frontMatter
+                ? metadataStyled(block.content, hidden: true)
+                : styleBlock(block.content, cursorPosition: nil, hideComments: true)
+        case .source:
+            return sourceStyled(block.content)
+        }
+    }
+
     // MARK: - In-Place Block Restyling
 
     /// Re-styles a single block in the text storage in place (no string mutation).
@@ -769,12 +913,7 @@ extension EditorTextView {
             }
         }
 
-        let styled: NSAttributedString
-        switch viewMode {
-        case .edit:    styled = styleBlock(block.content, cursorPosition: cursorInBlock)
-        case .reading: styled = styleBlock(block.content, cursorPosition: nil, hideComments: true)
-        case .source:  styled = sourceStyled(block.content)
-        }
+        let styled = styledBlock(block, cursorInBlock: cursorInBlock)
         let offset = block.range.location
 
         styled.enumerateAttributes(in: NSRange(location: 0, length: styled.length), options: []) { attrs, range, _ in

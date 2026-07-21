@@ -20,6 +20,14 @@ enum EditorPreferenceCoordinator {
         forEachDocument { $0.refreshMinimapVisibility() }
     }
 
+    static func refreshMarkdownFeatures() {
+        let features = AppSettings.markdownFeatures
+        forEachDocument {
+            $0.editor?.markdownFeatures = features
+            $0.refreshReadView()
+        }
+    }
+
     private static func forEachDocument(_ apply: (Document) -> Void) {
         for case let document as Document in NSDocumentController.shared.documents {
             apply(document)

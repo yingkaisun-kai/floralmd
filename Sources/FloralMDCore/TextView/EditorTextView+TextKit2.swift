@@ -9,7 +9,7 @@ import AppKit
 // `NSTextView.layoutManager` or store NSTextBlock/NSTextTable attributes —
 // either silently switches the view back to TextKit 1 for good.
 //
-// Two custom attributes drive a custom layout fragment:
+// Custom attributes drive a custom layout fragment:
 //
 // - `.blockDecoration` (paragraph-level): callout boxes, quote bars, table
 //   borders, thematic-break rules. Fragment frames tile vertically, so
@@ -22,6 +22,13 @@ import AppKit
 //   forbids. Instead the anchor character is hidden, `.kern` reserves the
 //   image's advance width (the same trick the table renderer uses for column
 //   alignment), and the fragment draws the image at the anchor's position.
+// - `.codeBlockLanguageLabel` (paragraph-level): a fenced code block's opening
+//   row draws a small text label at the right edge without inserting display
+//   characters into storage.
+// - `.codeBlockPresentation` (paragraph-level): identifies every paragraph in
+//   one fenced code block and carries its source-backed copy payload. Hover UI
+//   reads this attribute from laid-out fragments; it never enters the text
+//   storage as display content.
 
 public extension NSAttributedString.Key {
     /// Paragraph-level decoration drawn behind the text by
@@ -39,6 +46,81 @@ public extension NSAttributedString.Key {
     /// Markdown remains in storage (and is revealed while editing); the custom
     /// fragment draws each cell in its own fixed-width wrapping rectangle.
     static let tableRowPresentation = NSAttributedString.Key("MarkdownEditor.tableRowPresentation")
+    /// Display language on an inactive fenced code block's opening row.
+    /// Value: a non-empty `String`; absent for unlabelled and plain-text fences.
+    static let codeBlockLanguageLabel = NSAttributedString.Key(
+        "MarkdownEditor.codeBlockLanguageLabel"
+    )
+    /// Presentation metadata shared by every paragraph in one fenced code
+    /// block. The code payload excludes the opening/closing fences and info
+    /// string. Value: `CodeBlockPresentation`.
+    static let codeBlockPresentation = NSAttributedString.Key(
+        "MarkdownEditor.codeBlockPresentation"
+    )
+}
+
+/// Source-backed metadata for edit-mode fenced-code chrome. Reference identity
+/// groups all laid-out paragraphs from one block during hover hit-testing.
+public final class CodeBlockPresentation: NSObject, @unchecked Sendable {
+    public let code: String
+    public let isActive: Bool
+
+    public init(code: String, isActive: Bool = false) {
+        self.code = code
+        self.isActive = isActive
+    }
+
+    public override func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? CodeBlockPresentation else { return false }
+        return other.code == code && other.isActive == isActive
+    }
+
+    public override var hash: Int { code.hashValue ^ (isActive ? 1 : 0) }
+}
+
+/// Shared geometry keeps the language label and hover control disjoint even
+/// for long labels or narrow text columns. Neither surface changes line height.
+enum CodeBlockChromeLayout {
+    // Match Read mode's block-level anchors instead of deriving chrome from a
+    // text line's typographic bounds. User line spacing must not move either
+    // control inside the code surface.
+    static let cornerRadius: CGFloat = 8
+    static let backgroundOutset: CGFloat = 8
+    static let labelTopInset: CGFloat = 9
+    static let labelLeadingInset: CGFloat = 12
+    static let trailingInset: CGFloat = 8
+    static let controlWidth: CGFloat = 76
+    static let controlHeight: CGFloat = 28
+    static let labelGap: CGFloat = 8
+
+    /// A Lucide-like 14pt copy glyph centered in the 28pt button. Deriving
+    /// from the button midpoint avoids the previous hard-coded 3pt up-left
+    /// drift and keeps the icon balanced if the control size changes.
+    static func copyIconRects(in buttonRect: CGRect) -> (back: CGRect, front: CGRect) {
+        let glyphOrigin = CGPoint(x: buttonRect.midX - 7, y: buttonRect.midY - 7)
+        let size = CGSize(width: 9, height: 9)
+        return (
+            CGRect(origin: glyphOrigin, size: size),
+            CGRect(origin: CGPoint(x: glyphOrigin.x + 5, y: glyphOrigin.y + 5), size: size)
+        )
+    }
+
+    static func languageLabelRect(blockLeft: CGFloat, blockWidth: CGFloat,
+                                  textSize: CGSize) -> CGRect? {
+        let horizontalPadding: CGFloat = 6
+        let verticalPadding: CGFloat = 4
+        let maxX = blockLeft + blockWidth - trailingInset
+            - controlWidth - labelGap
+        let minX = blockLeft + labelLeadingInset
+        let availableWidth = maxX - minX
+        guard availableWidth >= 20 else { return nil }
+        let width = min(ceil(textSize.width) + horizontalPadding * 2, availableWidth)
+        let height = ceil(textSize.height) + verticalPadding * 2
+        return CGRect(x: maxX - width,
+                      y: labelTopInset,
+                      width: width,
+                      height: height)
+    }
 }
 
 /// Visual cells for one inactive table row. Every row in a table receives the
@@ -98,6 +180,11 @@ public final class BlockDecoration: NSObject, @unchecked Sendable {
         case horizontalRule(color: NSColor, centerOffset: CGFloat)
         /// Subtle dashed guides through ancestor list-marker columns.
         case indentGuides(xOffsets: [CGFloat], color: NSColor)
+        /// A fenced code block's quiet full-column background and boundary.
+        /// Paragraph fragments tile vertically; only the first/last paragraph
+        /// draws the corresponding horizontal edge.
+        case codeBlock(background: NSColor, borderColor: NSColor,
+                       isFirst: Bool, isLast: Bool)
     }
 
     public let kind: Kind
@@ -139,6 +226,7 @@ public final class BlockDecoration: NSObject, @unchecked Sendable {
         case .tableRow: return 3
         case .horizontalRule: return 4
         case .indentGuides: return 5
+        case .codeBlock: return 6
         }
     }
 }
@@ -168,8 +256,7 @@ public final class BlockDecorationList: NSObject, @unchecked Sendable {
 ///
 /// The path form exists because of a TextKit 2 wedge: drawing an *image* on a
 /// wrapping, multi-line layout fragment collapses that fragment's layout to a
-/// single line, while drawing a *shape* does not (see
-/// docs/investigations/archives/callout-title-wrap-investigation.md). Overlays that can share a line
+/// single line, while drawing a *shape* does not. Overlays that can share a line
 /// with wrapping text (the custom-callout-title icon) must use the path form.
 public final class FragmentOverlay: NSObject, @unchecked Sendable {
     public enum Role: Sendable {
@@ -234,6 +321,10 @@ final class DecoratedTextLayoutFragment: NSTextLayoutFragment {
     let gitChange: GitLineChangeKind?
     let gitDeletionEdges: Set<GitDeletionEdge>
     let tableRowPresentation: TableRowPresentation?
+    /// Optional language label drawn inside this opening fence row.
+    let codeBlockLanguageLabel: String?
+    /// Shared metadata for edit-mode hover hit-testing and raw-code copying.
+    let codeBlockPresentation: CodeBlockPresentation?
 
     init(textElement: NSTextElement, range: NSTextRange?,
          decorations: [BlockDecoration],
@@ -241,12 +332,16 @@ final class DecoratedTextLayoutFragment: NSTextLayoutFragment {
          tableRowPresentation: TableRowPresentation?,
          gitChange: GitLineChangeKind?,
          gitDeletionEdges: Set<GitDeletionEdge>,
+         codeBlockLanguageLabel: String?,
+         codeBlockPresentation: CodeBlockPresentation?,
          antialias: Bool) {
         self.decorations = decorations
         self.overlays = overlays
         self.tableRowPresentation = tableRowPresentation
         self.gitChange = gitChange
         self.gitDeletionEdges = gitDeletionEdges
+        self.codeBlockLanguageLabel = codeBlockLanguageLabel
+        self.codeBlockPresentation = codeBlockPresentation
         self.antialias = antialias
         super.init(textElement: textElement, range: range)
     }
@@ -330,8 +425,8 @@ final class DecoratedTextLayoutFragment: NSTextLayoutFragment {
         var bounds = super.renderingSurfaceBounds
         let frame = layoutFragmentFrame
         if !decorations.isEmpty {
-            bounds = bounds.union(CGRect(x: containerLeft - 4, y: 0,
-                                         width: containerWidth + 8, height: frame.height))
+            bounds = bounds.union(CGRect(x: containerLeft - 10, y: 0,
+                                         width: containerWidth + 20, height: frame.height))
         }
         if gitChange != nil || !gitDeletionEdges.isEmpty {
             bounds = bounds.union(CGRect(x: containerLeft - 12, y: 0,
@@ -580,6 +675,80 @@ final class DecoratedTextLayoutFragment: NSTextLayoutFragment {
             }
             context.strokePath()
             context.restoreGState()
+
+        case .codeBlock(let background, let borderColor, let isFirst, let isLast):
+            // Extend into the editor's existing text-container margin instead
+            // of indenting code. This creates visual padding without changing
+            // wrapping, line height, source offsets, or caret geometry.
+            let rect = columnRect.insetBy(dx: -CodeBlockChromeLayout.backgroundOutset, dy: 0)
+            let radius = min(CodeBlockChromeLayout.cornerRadius,
+                             rect.width / 2, rect.height / 2)
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: rect.minX,
+                                  y: rect.minY + (isFirst ? radius : 0)))
+            if isFirst {
+                path.addQuadCurve(to: CGPoint(x: rect.minX + radius, y: rect.minY),
+                                  control: CGPoint(x: rect.minX, y: rect.minY))
+                path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+                path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + radius),
+                                  control: CGPoint(x: rect.maxX, y: rect.minY))
+            } else {
+                path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            }
+            path.addLine(to: CGPoint(x: rect.maxX,
+                                     y: rect.maxY - (isLast ? radius : 0)))
+            if isLast {
+                path.addQuadCurve(to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+                                  control: CGPoint(x: rect.maxX, y: rect.maxY))
+                path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+                path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+                                  control: CGPoint(x: rect.minX, y: rect.maxY))
+            } else {
+                path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            }
+            path.closeSubpath()
+            context.setFillColor(background.cgColor)
+            context.addPath(path)
+            context.fillPath()
+
+            context.setStrokeColor(borderColor.cgColor)
+            let hairline = 1 / max(1, abs(context.ctm.a))
+            context.setLineWidth(hairline)
+            let borderPath = CGMutablePath()
+            borderPath.move(to: CGPoint(x: rect.minX,
+                                        y: rect.minY + (isFirst ? radius : 0)))
+            borderPath.addLine(to: CGPoint(x: rect.minX,
+                                           y: rect.maxY - (isLast ? radius : 0)))
+            borderPath.move(to: CGPoint(x: rect.maxX,
+                                        y: rect.minY + (isFirst ? radius : 0)))
+            borderPath.addLine(to: CGPoint(x: rect.maxX,
+                                           y: rect.maxY - (isLast ? radius : 0)))
+            if isFirst {
+                borderPath.move(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+                borderPath.addQuadCurve(
+                    to: CGPoint(x: rect.minX + radius, y: rect.minY),
+                    control: CGPoint(x: rect.minX, y: rect.minY)
+                )
+                borderPath.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+                borderPath.addQuadCurve(
+                    to: CGPoint(x: rect.maxX, y: rect.minY + radius),
+                    control: CGPoint(x: rect.maxX, y: rect.minY)
+                )
+            }
+            if isLast {
+                borderPath.move(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
+                borderPath.addQuadCurve(
+                    to: CGPoint(x: rect.minX + radius, y: rect.maxY),
+                    control: CGPoint(x: rect.minX, y: rect.maxY)
+                )
+                borderPath.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.maxY))
+                borderPath.addQuadCurve(
+                    to: CGPoint(x: rect.maxX, y: rect.maxY - radius),
+                    control: CGPoint(x: rect.maxX, y: rect.maxY)
+                )
+            }
+            context.addPath(borderPath)
+            context.strokePath()
         }
     }
 }
@@ -605,6 +774,12 @@ extension EditorTextView: NSTextLayoutManagerDelegate {
         let tableRowPresentation = str.attribute(
             .tableRowPresentation, at: 0, effectiveRange: nil
         ) as? TableRowPresentation
+        let codeBlockLanguageLabel = str.attribute(
+            .codeBlockLanguageLabel, at: 0, effectiveRange: nil
+        ) as? String
+        let codeBlockPresentation = str.attribute(
+            .codeBlockPresentation, at: 0, effectiveRange: nil
+        ) as? CodeBlockPresentation
         let decoValue = str.attribute(.blockDecoration, at: 0, effectiveRange: nil)
         let decorations: [BlockDecoration]
         if let list = decoValue as? BlockDecorationList {
@@ -626,6 +801,8 @@ extension EditorTextView: NSTextLayoutManagerDelegate {
         // text and antialiasing is on (the default); otherwise vend the custom
         // fragment so its draw can disable antialiasing.
         guard !decorations.isEmpty || !overlays.isEmpty || tableRowPresentation != nil
+                || codeBlockLanguageLabel != nil
+                || codeBlockPresentation != nil
                 || gitChange != nil || !gitDeletionEdges.isEmpty || !textAntialias else {
             return NSTextLayoutFragment(textElement: textElement,
                                         range: textElement.elementRange)
@@ -637,6 +814,8 @@ extension EditorTextView: NSTextLayoutManagerDelegate {
                                            tableRowPresentation: tableRowPresentation,
                                            gitChange: gitChange,
                                            gitDeletionEdges: gitDeletionEdges,
+                                           codeBlockLanguageLabel: codeBlockLanguageLabel,
+                                           codeBlockPresentation: codeBlockPresentation,
                                            antialias: textAntialias)
     }
 }

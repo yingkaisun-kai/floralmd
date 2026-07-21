@@ -53,6 +53,11 @@ enum HTMLTheme {
           --code-bg: \(codeBg);
           --marker: \(resolvedRGBA(.tertiaryLabelColor, dark: dark));
           --check-fill: \(resolvedRGBA(.controlAccentColor, dark: dark));
+          --attachment-pdf: \(resolvedRGBA(.systemRed, dark: dark));
+          --attachment-audio: \(resolvedRGBA(.systemPurple, dark: dark));
+          --attachment-video: \(resolvedRGBA(.systemBlue, dark: dark));
+          --attachment-note: \(resolvedRGBA(.systemTeal, dark: dark));
+          --attachment-unknown: \(resolvedRGBA(.secondaryLabelColor, dark: dark));
           --line-height: \(trim(lineHeight));
           --para-space: \(trim(max(theme.paragraphSpacingBefore, 0)))px;
           --page-max-width: \(pageMaxWidth);
@@ -76,11 +81,14 @@ enum HTMLTheme {
         return [
             rule("pre code", nil),
             rule("pre code .tok-keyword", .keyword),
+            rule("pre code .tok-command", .command),
             rule("pre code .tok-type", .type),
-            rule("pre code .tok-string", .string),
+            rule("pre code .tok-attribute", .attribute),
+            rule("pre code .tok-variable", .variable),
+            rule("pre code .tok-value", .value),
             rule("pre code .tok-number", .number),
+            rule("pre code .tok-string", .string),
             rule("pre code .tok-comment", .comment),
-            rule("pre code .tok-function", .function),
         ].joined(separator: "\n")
     }
 
@@ -142,13 +150,54 @@ enum HTMLTheme {
     h1 { font-size: 1.9em; } h2 { font-size: 1.55em; } h3 { font-size: 1.3em; }
     h4 { font-size: 1.1em; } h5 { font-size: 1em; } h6 { font-size: 0.9em; color: var(--faint); }
     :is(h1, h2, h3, h4, h5, h6):first-child { margin-top: 0; }
-    a { color: var(--accent); text-decoration: underline; }
+    /* WebKit does not consistently infer the pointing-hand cursor for anchors
+       that use FloralMD's private navigation schemes. Keep every rendered link
+       visibly interactive regardless of its destination scheme. */
+    a { color: var(--accent); text-decoration: underline; cursor: pointer; }
     code { font-family: var(--mono-font); font-size: 0.92em; color: var(--code);
            background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
     pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto;
           /* tab-size: browsers default to 8; match the common editor convention of 4. */
           tab-size: 4; -moz-tab-size: 4; }
     pre code { color: var(--fg); background: none; padding: 0; font-size: var(--mono-size); }
+    .code-block-wrap { position: relative; margin: 1em 0; }
+    .code-block-wrap pre { margin: 0; }
+    .code-block-wrap.has-controls pre { padding-top: 44px; }
+    .code-block-controls {
+      position: absolute; z-index: 1; top: 8px; right: 8px;
+      display: flex; max-width: calc(100% - 16px); min-width: 0;
+      align-items: center; justify-content: flex-end; gap: 6px;
+    }
+    .code-language-label {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: var(--mono-font); font-size: 11px; line-height: 1;
+      color: var(--faint); background: color-mix(in srgb, var(--code-bg) 82%, var(--bg));
+      border-radius: 4px; padding: 4px 6px;
+    }
+    .code-copy-btn {
+      flex: 0 0 auto; display: flex;
+      min-width: 28px; min-height: 28px; align-items: center; justify-content: center;
+      font-family: var(--body-font); font-size: 11px; font-weight: 500;
+      color: var(--faint); background: color-mix(in srgb, var(--code-bg) 88%, var(--bg));
+      border: 1px solid color-mix(in srgb, var(--rule) 68%, transparent);
+      border-radius: 6px; padding: 4px 6px; text-decoration: none; cursor: pointer;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+    }
+    .code-copy-btn:hover { color: var(--fg); border-color: var(--rule); }
+    .code-copy-btn svg { width: 14px; height: 14px; stroke: currentColor; }
+    .code-copy-default { display: flex; }
+    .code-copy-confirmation { display: none; align-items: center; gap: 4px; white-space: nowrap; }
+    .code-copy-btn.copied .code-copy-default { display: none; }
+    .code-copy-btn.copied .code-copy-confirmation { display: flex; }
+    .code-copy-icon { opacity: 0; transition: opacity .15s ease; }
+    .code-block-wrap:hover .code-copy-icon,
+    .code-block-wrap:focus-within .code-copy-icon,
+    .code-copy-btn.copied { opacity: 1; }
+    .code-copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .code-copy-status {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
     blockquote { margin: 1em 0; padding: 0.5em 1em; border-left: 3px solid var(--rule); color: var(--faint); }
     /* Without this, the 1em bottom margin on the last <p> inside a blockquote
        creates asymmetric vertical padding — the blockquote looks heavier at the
@@ -161,6 +210,15 @@ enum HTMLTheme {
     .callout-body > blockquote:last-child { margin-bottom: 0; }
     hr { border: none; border-top: 1px solid var(--rule); margin: 1.6em 0; }
     mark { background: rgba(255, 200, 0, 0.3); color: inherit; padding: 0 0.1em; }
+    .tag, .embed-label { color: var(--accent); background: color-mix(in srgb, currentColor 12%, transparent);
+      border-radius: 4px; padding: 0 0.2em; }
+    .embed-label-pdf { color: var(--attachment-pdf); }
+    .embed-label-audio { color: var(--attachment-audio); }
+    .embed-label-video { color: var(--attachment-video); }
+    .embed-label-note { color: var(--attachment-note); }
+    .embed-label-unknown { color: var(--attachment-unknown); }
+    .embed-label::before { content: attr(data-attachment-label) " · "; font-size: 0.78em;
+      font-weight: 600; letter-spacing: 0.01em; opacity: 0.82; }
     /* Whitelisted inline HTML rendered in Read mode (see HTMLRenderer
        sanitizeInlineHTML). <u>/<mark> use the UA underline / the rule above;
        <kbd> matches the editor's inline-key chrome, <sub>/<sup> get the standard
@@ -193,42 +251,39 @@ enum HTMLTheme {
     li { margin: 0.35em 0; }
     li::marker { color: var(--marker); font-size: 0.85em; }
     li > p { margin: 0; }
-    /* Task items: float the checkbox into the marker slot so the label and
-       wrapped lines sit at the same content edge as bullet/number text. The
-       negative margin-left pulls the checkbox into the list's padding area; the
-       nested <ul>/<ol> clears the float so it falls below.
+    /* Task items use an explicit marker/content grid. A float here looks correct
+       at one font size but its clear can push the first text line below the icon
+       as body size and line height grow. The negative item margin places the
+       marker column in the ordinary list-marker slot while the second column
+       begins at exactly the same content edge as bullet/number text.
        Lucide checkbox (a tinted <svg>, see HTMLRenderer/LucideIcons): unchecked =
        dim outlined circle (--marker, the editor's tertiaryLabelColor); checked =
        disc filled in the system accent (--check-fill, matching the editor's
        controlAccentColor) with a white check baked into the SVG. `currentColor`
        in the SVG inherits from `color` below. */
-    li.task { list-style: none; }
+    li.task {
+      list-style: none; display: grid;
+      grid-template-columns: 1.2em minmax(0, 1fr); column-gap: 0.3em;
+      align-items: baseline; margin-left: -1.5em;
+    }
     li.task > .task-check {
-      /* Sized a bit larger than 1em so the Lucide circle (r=10 in a 24-box, so it
-         underfills) reads as big as the editor's checkbox. margin-left is roughly
-         -(width + margin-right) so the task TEXT starts at the content edge,
-         lining up with sibling bullet/number text; hand-tuned to -1.45em (a hair
-         less negative than the -1.5em that formula gives) so the marker centers
-         over the bullet/number column at every nesting level.
-         margin-top (0.1em) centers the box on the first text line's cap-height
-         center at the default 16pt / line-height 1.45. A font-agnostic fix would
-         measure NSFont.ascender at render time and emit an inline margin-top. */
-      float: left; width: 1.2em; height: 1.2em; line-height: 0;
-      margin-top: 0.1em;
-      margin-right: 0.3em;
-      margin-left: -1.45em;
+      width: 1.2em; height: 1.2em; line-height: 0;
+      grid-column: 1; grid-row: 1;
+      /* Grid baseline alignment places the SVG center above the first text
+         line's ink center. Descend it by the measured font-relative delta
+         without enlarging the row; the WebView geometry test locks the two
+         centers to within a small sub-pixel-tolerant bound. */
+      align-self: baseline; transform: translateY(0.225em);
     }
     li.task > .task-check svg { display: block; width: 1.2em; height: 1.2em; }
     .task-check--unchecked { color: var(--marker); }
     .task-check--checked { color: var(--check-fill); }
-    li.task--checked > p { opacity: 0.45; text-decoration: line-through; }
-    li.task > p { display: inline; margin: 0; }
-    li.task > ul, li.task > ol { clear: left; }
-    /* Contain the checkbox float within its own item. Without this, a task item
-       that has no nested list (the float is never cleared by a child ul/ol)
-       leaks its float onto the FOLLOWING sibling, shoving that item's bullet/
-       number marker to the right — so sibling markers stop lining up. */
-    li.task::after { content: ""; display: block; clear: both; }
+    li.task > .task-content {
+      grid-column: 2; grid-row: 1; align-self: baseline; min-width: 0;
+    }
+    li.task > .task-content > p { margin: 0; }
+    li.task > .task-content > ul, li.task > .task-content > ol { margin: 0; }
+    li.task--checked > .task-content { opacity: 0.45; text-decoration: line-through; }
     .blank-line { height: calc(var(--body-size) * var(--line-height)); }
     /* Tables stay visually substantial without forcing every short table to
        span the full reading column. Very wide content wraps where possible;
@@ -277,6 +332,11 @@ enum HTMLTheme {
     .callout-failure .callout-icon, .callout-fail .callout-icon,
     .callout-missing .callout-icon { padding-top: 0.15em; }
     .callout-title-text { flex: 1 1 auto; }
+    .callout-collapsible > summary { cursor: pointer; list-style: none; }
+    .callout-collapsible > summary::-webkit-details-marker { display: none; }
+    .callout-collapsible > summary::after { content: "›"; flex: 0 0 auto;
+        margin-left: 0.3em; transition: transform 0.15s ease; }
+    .callout-collapsible[open] > summary::after { transform: rotate(90deg); }
     .callout-body { margin-top: 0.4em; }
     /* A title-only callout still emits an empty body div; collapse its top margin
        so the box doesn't carry the 0.4em title gap as dead space at the bottom. */
@@ -296,6 +356,7 @@ enum HTMLTheme {
 
     @media print {
       body { padding: 0; }
+      .code-copy-btn, .code-copy-status { display: none !important; }
       /* QUIRK: WebKit strips background colors when printing by default (it
          follows the user's browser setting), even though WKWebView.createPDF
          keeps them. `print-color-adjust: exact` forces faithful color output

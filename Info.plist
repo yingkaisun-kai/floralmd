@@ -25,9 +25,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
-    <string>10</string>
+    <string>11</string>
     <key>CFBundleShortVersionString</key>
-    <string>2026.7.9</string>
+    <string>2026.7.10</string>
     <key>SUFeedURL</key>
     <string>https://raw.githubusercontent.com/yingkaisun-kai/floralmd/feed/appcast.xml</string>
     <key>SUPublicEDKey</key>

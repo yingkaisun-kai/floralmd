@@ -106,7 +106,7 @@ extension EditorTextView {
         let newRawStart = rawStart + indentLen
         let newRawEnd = rawEnd + indentLen * (endBlock - startBlock + 1)
 
-        blocks = BlockParser.parse(rawSource, previous: blocks)
+        blocks = BlockParser.parse(rawSource, previous: blocks, features: markdownFeatures)
 
         let selInRaw = sel.length > 0
             ? NSRange(location: newRawStart, length: newRawEnd - newRawStart) : nil
@@ -204,7 +204,7 @@ extension EditorTextView {
         let endOff = rawEnd - blocks[endBlock].range.location
         let newRawEnd = endBlockNewStart + max(0, endOff - removed[endBlock])
 
-        blocks = BlockParser.parse(rawSource, previous: blocks)
+        blocks = BlockParser.parse(rawSource, previous: blocks, features: markdownFeatures)
 
         let selInRaw = sel.length > 0
             ? NSRange(location: newRawStart, length: max(0, newRawEnd - newRawStart)) : nil

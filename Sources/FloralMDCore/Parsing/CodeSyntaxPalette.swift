@@ -22,26 +22,32 @@ enum CodeSyntaxPalette {
     /// Tomorrow (light).
     private static func tomorrow(_ type: CodeHighlighter.TokenType?) -> String {
         switch type {
-        case nil:        return "#4d4d4c"
-        case .keyword:   return "#8959a8"
-        case .type:      return "#c18401"
-        case .string:    return "#718c00"
-        case .number:    return "#f5871f"
-        case .comment:   return "#8e908c"
-        case .function:  return "#4271ae"
+        case nil:         return "#4d4d4c"
+        case .keyword:    return "#8959a8"
+        case .command:    return "#4271ae"
+        case .type:       return "#c18401"
+        case .attribute:  return "#3e999f"
+        case .variable:   return "#c82829"
+        case .value:      return "#986801"
+        case .number:     return "#f5871f"
+        case .string:     return "#718c00"
+        case .comment:    return "#8e908c"
         }
     }
 
     /// One Dark.
     private static func oneDark(_ type: CodeHighlighter.TokenType?) -> String {
         switch type {
-        case nil:        return "#abb2bf"
-        case .keyword:   return "#c678dd"
-        case .type:      return "#e5c07b"
-        case .string:    return "#98c379"
-        case .number:    return "#d19a66"
-        case .comment:   return "#5c6370"
-        case .function:  return "#61afef"
+        case nil:         return "#abb2bf"
+        case .keyword:    return "#c678dd"
+        case .command:    return "#61afef"
+        case .type:       return "#e5c07b"
+        case .attribute:  return "#56b6c2"
+        case .variable:   return "#e06c75"
+        case .value:      return "#d19a66"
+        case .number:     return "#d19a66"
+        case .string:     return "#98c379"
+        case .comment:    return "#5c6370"
         }
     }
 }

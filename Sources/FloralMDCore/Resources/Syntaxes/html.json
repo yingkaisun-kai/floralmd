@@ -1,0 +1,10 @@
+{
+  "name": "html",
+  "displayName": "HTML",
+  "aliases": ["htm", "xml"],
+  "lineComment": null,
+  "blockComment": ["<!--", "-->"],
+  "strings": ["\"", "'"],
+  "keywords": [],
+  "types": []
+}

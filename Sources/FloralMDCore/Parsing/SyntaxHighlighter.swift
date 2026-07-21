@@ -62,6 +62,10 @@ public enum SyntaxHighlighter {
             /// `path#heading` portion (before any `|alias`); the visible display
             /// text is the span's contentRange.
             case wikilink(target: String)
+            /// A non-image Obsidian `![[target]]` embed. FloralMD presents its
+            /// classified attachment kind as a source-backed label; it does not
+            /// attempt to preview, embed, or own the referenced file.
+            case embed(target: String, kind: AttachmentKind)
             /// A CommonMark backslash escape `\X`. The backslash is the delimiter
             /// (hidden when inactive, dimmed when active); the escaped character
             /// `X` renders literally as its content.
@@ -77,6 +81,10 @@ public enum SyntaxHighlighter {
             /// tags show colored. `tag` is the lowercased element name; the two
             /// delimiterRanges are the open and close tags.
             case htmlFormat(tag: String)
+            /// An Obsidian `#tag`; `name` excludes the leading hash.
+            case tag(name: String)
+            /// A trailing Obsidian `^blockid`; `id` excludes the caret.
+            case blockID(id: String)
 
             public enum CheckboxState: Equatable, Sendable {
                 case checked, unchecked
@@ -93,7 +101,8 @@ public enum SyntaxHighlighter {
     /// swift-markdown can resolve GFM reference links whose definition lives in
     /// another block; spans landing in the appended region are dropped. Empty
     /// (the common case) means no append and no cost.
-    public static func parse(_ text: String, linkDefinitions: String = "") -> [Span] {
+    public static func parse(_ text: String, linkDefinitions: String = "",
+                             features: MarkdownFeatures = .all) -> [Span] {
         guard !text.isEmpty else { return [] }
 
         // Walk the AST over the block plus any appended reference definitions,
@@ -102,19 +111,21 @@ public enum SyntaxHighlighter {
         let textLen = (text as NSString).length
         let parseText = linkDefinitions.isEmpty ? text : text + "\n\n" + linkDefinitions
         let doc = Document(parsing: parseText, options: [.disableSmartOpts])
-        var walker = SpanCollector(source: parseText)
+        var walker = SpanCollector(source: parseText, features: features)
         walker.visit(doc)
         if !linkDefinitions.isEmpty {
             walker.spans.removeAll { $0.fullRange.upperBound > textLen }
         }
 
         // ==highlight== is not supported by swift-markdown; parse with regex.
-        parseHighlight(text, into: &walker.spans)
+        if features.contains(.highlight) { parseHighlight(text, into: &walker.spans) }
 
         // $$…$$ display math (the block is pre-merged by BlockParser), then
         // $…$ inline math.
-        parseDisplayMath(text, into: &walker.spans)
-        parseMath(text, into: &walker.spans)
+        if features.contains(.math) {
+            parseDisplayMath(text, into: &walker.spans)
+            parseMath(text, into: &walker.spans)
+        }
 
         // Trailing backslash line break (single-line blocks only).
         parseLineBreak(text, into: &walker.spans)
@@ -128,13 +139,20 @@ public enum SyntaxHighlighter {
         parseEmptyOrderedListItem(text, into: &walker.spans)
 
         // [^id] footnote references and [^id]: definition markers.
-        parseFootnotes(text, into: &walker.spans)
+        if features.contains(.footnote) { parseFootnotes(text, into: &walker.spans) }
+
+        if features.contains(.tag) { parseTags(text, into: &walker.spans) }
+        if features.contains(.blockID) { parseBlockID(text, into: &walker.spans) }
 
         // %%comments%% and [[wikilinks]]. Both are opaque: their inner text is
         // a raw note / link target, not markdown — drop any span fully inside
         // one so the content isn't re-styled.
-        parseComments(text, into: &walker.spans)
-        parseWikiLinks(text, into: &walker.spans)
+        if features.contains(.inlineComment) || features.contains(.multiBlockComment) {
+            parseComments(text, into: &walker.spans, features: features)
+        }
+        if features.contains(.wikilink) || features.contains(.wikilinkEmbed) {
+            parseWikiLinks(text, into: &walker.spans, features: features)
+        }
 
         // CommonMark backslash escapes (`\*`, `\$`, …). Runs after math/line-break
         // so it can defer to them; before HTML tags so `\<` defers to the escape.
@@ -155,14 +173,14 @@ public enum SyntaxHighlighter {
 
         let opaqueRanges: [NSRange] = walker.spans.compactMap { span in
             switch span.kind {
-            case .comment, .wikilink: return span.fullRange
+            case .comment, .wikilink, .embed: return span.fullRange
             default: return nil
             }
         }
         if !opaqueRanges.isEmpty {
             walker.spans.removeAll { span in
                 switch span.kind {
-                case .comment, .wikilink: return false
+                case .comment, .wikilink, .embed: return false
                 default: break
                 }
                 return opaqueRanges.contains {

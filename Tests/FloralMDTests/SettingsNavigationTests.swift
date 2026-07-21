@@ -1,3 +1,4 @@
+// Modified from Edmund by Yingkai Sun for FloralMD.
 import Testing
 @testable import FloralMDCore
 
@@ -8,6 +9,7 @@ struct SettingsNavigationTests {
         #expect(SettingsPaneID.allCases == [
             .general,
             .editor,
+            .markdown,
             .shortcuts,
             .appearance,
             .advanced,

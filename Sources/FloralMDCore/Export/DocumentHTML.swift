@@ -25,8 +25,10 @@ public enum DocumentHTML {
                             baseURL: URL? = nil,
                             options: ReadRenderOptions = .default,
                             transparentBackground: Bool = false,
-                            renderMath: Bool = true) -> String {
-        var body = HTMLRenderer.render(markdown: markdown, options: options)
+                            renderMath: Bool = true,
+                            readModeCopyStrings: ReadModeCopyStrings? = nil) -> String {
+        var body = HTMLRenderer.render(markdown: markdown, options: options,
+                                       readModeCopyStrings: readModeCopyStrings)
         body = renderMath
             ? fillMath(body, theme: theme, dark: dark)
             : fillMathAsSource(body)

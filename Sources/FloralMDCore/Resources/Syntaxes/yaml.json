@@ -1,0 +1,10 @@
+{
+  "name": "yaml",
+  "displayName": "YAML",
+  "aliases": ["yml"],
+  "lineComment": "#",
+  "blockComment": null,
+  "strings": ["\"", "'"],
+  "keywords": ["true", "false", "null", "yes", "no", "on", "off"],
+  "types": []
+}

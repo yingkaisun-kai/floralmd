@@ -252,6 +252,7 @@ extension EditorTextView {
             self.pendingPromotion = false
             guard !self.isUpdating else { return }
             self.promoteVisibleUnstyledBlocks()
+            self.refreshPointerHoverFromWindow()
         }
     }
 }

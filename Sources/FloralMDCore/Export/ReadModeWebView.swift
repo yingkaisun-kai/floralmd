@@ -2,6 +2,24 @@
 import AppKit
 import WebKit
 
+public struct ReadModeCopyStrings: Sendable, Equatable {
+    public let copyCode: String
+    public let copied: String
+    public let announcement: String
+
+    public init(copyCode: String, copied: String, announcement: String) {
+        self.copyCode = copyCode
+        self.copied = copied
+        self.announcement = announcement
+    }
+
+    public static let english = ReadModeCopyStrings(
+        copyCode: "Copy code",
+        copied: "Copied",
+        announcement: "Code copied"
+    )
+}
+
 // MARK: - ReadModeWebView
 //
 // The WKWebView that backs Read mode. It is a pure renderer of the user's own
@@ -20,8 +38,14 @@ import WebKit
 public final class ReadModeWebView: WKWebView {
 
     private let coordinator = ReadModeNavigationCoordinator()
+    private let copyPasteboard: NSPasteboard
 
-    public init() {
+    public convenience init() {
+        self.init(copyPasteboard: .general)
+    }
+
+    init(copyPasteboard: NSPasteboard) {
+        self.copyPasteboard = copyPasteboard
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         // QUIRK: `isInspectable` (macOS 13.3+) marks the webview as inspectable
@@ -50,6 +74,47 @@ public final class ReadModeWebView: WKWebView {
     /// Called once a rendered document and any pending viewport restore are ready.
     public var onLoadFinished: (() -> Void)?
 
+    /// A copy button routes its base64 payload through the navigation delegate;
+    /// document JavaScript stays disabled and the pasteboard write remains native.
+    fileprivate func handleCopyCode(_ payload: String) {
+        let parts = payload.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, let buttonID = UUID(uuidString: String(parts[0])) else { return }
+        let base64 = String(parts[1])
+        guard let data = Data(base64Encoded: base64),
+              let code = String(data: data, encoding: .utf8) else { return }
+        copyPasteboard.clearContents()
+        guard copyPasteboard.setString(code, forType: .string) else { return }
+        flashCopyButton(id: buttonID)
+    }
+
+    /// The script is host-owned and contains no document or user content. Only
+    /// the renderer-generated UUID is interpolated; localized labels remain in
+    /// escaped data attributes, preserving the same boundary as the scroll bridge.
+    private func flashCopyButton(id: UUID) {
+        let js = """
+        (function() {
+          var el = document.getElementById('floralmd-copy-\(id.uuidString)');
+          if (!el || !el.classList.contains('code-copy-btn')) return false;
+          if (el._copyTimer) clearTimeout(el._copyTimer);
+          var copied = el.getAttribute('data-copied-label') || 'Copied';
+          el.setAttribute('aria-label', copied);
+          el.setAttribute('title', copied);
+          el.classList.add('copied');
+          var status = el.parentElement.querySelector('.code-copy-status');
+          if (status) status.textContent = el.getAttribute('data-copy-announcement') || copied;
+          el._copyTimer = setTimeout(function() {
+            var original = el.getAttribute('data-copy-label') || 'Copy code';
+            el.setAttribute('aria-label', original);
+            el.setAttribute('title', original);
+            el.classList.remove('copied');
+            if (status) status.textContent = '';
+          }, 1200);
+          return true;
+        })()
+        """
+        evaluateJavaScript(js, completionHandler: nil)
+    }
+
     /// Lets the document window supply its own translucent background while
     /// leaving rendered text and inlined assets fully opaque.
     public var usesTransparentBackground = false {
@@ -64,7 +129,7 @@ public final class ReadModeWebView: WKWebView {
     /// system appearance flips (light ↔ dark) without the document re-driving it.
     private var pending: (markdown: String, theme: EditorTheme,
                           callouts: [String: CalloutStyle], baseURL: URL?,
-                          options: ReadRenderOptions)?
+                          options: ReadRenderOptions, copyStrings: ReadModeCopyStrings)?
 
     private var pendingScrollRestore: (line: Int, fraction: Double)?
     private var loadGeneration = 0
@@ -78,8 +143,9 @@ public final class ReadModeWebView: WKWebView {
                        theme: EditorTheme,
                        callouts: [String: CalloutStyle],
                        baseURL: URL? = nil,
-                       options: ReadRenderOptions = .default) {
-        pending = (markdown, theme, callouts, baseURL, options)
+                       options: ReadRenderOptions = .default,
+                       copyStrings: ReadModeCopyStrings = .english) {
+        pending = (markdown, theme, callouts, baseURL, options, copyStrings)
         reloadHTML()
     }
 
@@ -109,14 +175,16 @@ public final class ReadModeWebView: WKWebView {
 
     private func performLoad(_ p: (markdown: String, theme: EditorTheme,
                                    callouts: [String: CalloutStyle], baseURL: URL?,
-                                   options: ReadRenderOptions)) {
+                                   options: ReadRenderOptions,
+                                   copyStrings: ReadModeCopyStrings)) {
         let dark = AppearanceResolver.isDark(effectiveAppearance)
         underPageBackgroundColor = usesTransparentBackground
             ? .clear : (NSColor(hex: dark ? "#1e1e1e" : "#ffffff") ?? .textBackgroundColor)
         let html = DocumentHTML.full(markdown: p.markdown, theme: p.theme,
                                      callouts: p.callouts, dark: dark,
                                      baseURL: p.baseURL, options: p.options,
-                                     transparentBackground: usesTransparentBackground)
+                                     transparentBackground: usesTransparentBackground,
+                                     readModeCopyStrings: p.copyStrings)
         guard html != lastLoadedHTML else {
             applyPendingScrollRestoreAndNotify()
             return
@@ -239,6 +307,9 @@ private final class ReadModeNavigationCoordinator: NSObject, WKNavigationDelegat
         case .openInternal(let target):
             owner?.onOpenInternalLink?(target)
             return .cancel
+        case .copyCode(let base64):
+            owner?.handleCopyCode(base64)
+            return .cancel
         case .openExternal(let url):
             NSWorkspace.shared.open(url)
             return .cancel
@@ -265,6 +336,7 @@ enum ReadModeNavigationPolicy {
         case reload
         case openWiki(String)
         case openInternal(String)
+        case copyCode(String)
         case openExternal(URL)
         case cancel
     }
@@ -286,6 +358,9 @@ enum ReadModeNavigationPolicy {
         }
         if scheme == HTMLRenderer.linkScheme {
             return .openInternal(decodeTarget(url, scheme: HTMLRenderer.linkScheme))
+        }
+        if scheme == HTMLRenderer.copyScheme {
+            return .copyCode(decodeTarget(url, scheme: HTMLRenderer.copyScheme))
         }
         // Decide by URL scheme, not navigation type: WebKit does not reliably
         // report `.linkActivated` for every click. Real web schemes are handed to
