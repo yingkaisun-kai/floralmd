@@ -124,7 +124,18 @@ extension EditorTextView {
         else { return nil }
 
         tlm.ensureLayout(for: NSTextRange(location: location))
-        guard let fragment = tlm.textLayoutFragment(for: location),
+        var fragment = tlm.textLayoutFragment(for: location)
+        // At a non-newline EOF, TextKit 2 may expose a valid document-end
+        // location but no fragment for it. The insertion point still belongs
+        // to the preceding line (not a phantom new paragraph), so borrow that
+        // fragment while keeping the end location for the x-position lookup.
+        if fragment == nil, offset == documentLength, offset > 0,
+           !(textStorage?.string.hasSuffix("\n") ?? rawSource.hasSuffix("\n")),
+           let previous = tlm.location(tlm.documentRange.location, offsetBy: offset - 1) {
+            tlm.ensureLayout(for: NSTextRange(location: previous))
+            fragment = tlm.textLayoutFragment(for: previous)
+        }
+        guard let fragment,
               let paragraphStart = fragment.textElement?.elementRange?.location
         else { return nil }
 

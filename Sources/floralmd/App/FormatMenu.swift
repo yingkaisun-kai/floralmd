@@ -78,8 +78,8 @@ enum FormatMenu {
                     action: #selector(EditorTextView.formatLink(_:))),
         MenuCommand(id: "format.wikilink", title: AppCopy.text("Wikilink", "Wiki 链接"),
                     action: #selector(EditorTextView.formatWikilink(_:))),
-        MenuCommand(id: "format.image", title: AppCopy.text("Image", "图片"),
-                    action: #selector(EditorTextView.formatImage(_:))),
+        MenuCommand(id: "format.image", title: AppCopy.text("Insert Image…", "插入图片…"),
+                    action: #selector(Document.insertImageReference(_:))),
     ] }
 
     private static var thematicBreakCommand: MenuCommand { MenuCommand(id: "format.thematicBreak", title: AppCopy.text("Thematic Break", "分隔线"),

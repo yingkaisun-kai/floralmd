@@ -244,6 +244,152 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         return true
     }
 
+    /// Selects an existing image and inserts an ordinary Markdown reference.
+    /// This command never copies or takes ownership of the selected file.
+    @objc func insertImageReference(_ sender: Any?) {
+        guard editor?.viewMode != .reading,
+              let window = windowControllers.first?.window else { NSSound.beep(); return }
+
+        if AppSettings.imagePathStyle == .relative, fileURL == nil {
+            presentSaveDocumentBeforeImageAlert(in: window)
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.image]
+        panel.directoryURL = fileURL?.deletingLastPathComponent()
+        panel.prompt = AppCopy.text("Insert", "插入")
+        panel.message = AppCopy.text(
+            "Choose an image to reference from this Markdown file.",
+            "选择要在当前 Markdown 文件中引用的图片。"
+        )
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let self, let imageURL = panel.url,
+                  let destination = ImageReference.destination(
+                    documentURL: self.fileURL,
+                    imageURL: imageURL,
+                    style: AppSettings.imagePathStyle.referenceStyle
+                  ) else { return }
+            let alt = imageURL.deletingPathExtension().lastPathComponent
+            self.editor.insertImageReference(destination: destination, defaultAltText: alt)
+        }
+    }
+
+    /// Intercepts only clipboard payloads that can become a PNG. Ordinary text
+    /// and Markdown paste stay on NSTextView's standard editing path.
+    private func handleClipboardImagePaste() -> Bool {
+        guard editor?.viewMode != .reading,
+              let pngData = clipboardPNGData(from: .general) else { return false }
+        guard let window = windowControllers.first?.window else { return true }
+        guard fileURL != nil else {
+            presentSaveDocumentBeforeImageAlert(in: window)
+            return true
+        }
+        presentClipboardImageNameSheet(pngData: pngData, in: window)
+        return true
+    }
+
+    private func clipboardPNGData(from pasteboard: NSPasteboard) -> Data? {
+        if let png = pasteboard.data(forType: .png) { return png }
+
+        let image: NSImage?
+        if let tiff = pasteboard.data(forType: .tiff) {
+            image = NSImage(data: tiff)
+        } else {
+            image = NSImage(pasteboard: pasteboard)
+        }
+        guard let image,
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
+    private func presentClipboardImageNameSheet(pngData: Data, in window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = AppCopy.text("Name pasted image", "命名粘贴的图片")
+        alert.informativeText = AppCopy.text(
+            "The date and time prefix is editable. The image will be saved as PNG.",
+            "日期和时间前缀可以编辑；图片将保存为 PNG。"
+        )
+        alert.addButton(withTitle: AppCopy.text("Save and Insert", "保存并插入"))
+        alert.addButton(withTitle: AppCopy.text("Cancel", "取消"))
+
+        let nameField = NSTextField(string: ImageReference.timestampPrefix(for: Date()))
+        nameField.placeholderString = AppCopy.text("Image name", "图片名称")
+        nameField.frame = NSRect(x: 0, y: 0, width: 340, height: 24)
+        alert.accessoryView = nameField
+        alert.window.initialFirstResponder = nameField
+
+        alert.beginSheetModal(for: window) { [weak self, weak nameField] response in
+            guard response == .alertFirstButtonReturn,
+                  let self,
+                  let proposedName = nameField?.stringValue else { return }
+            self.saveClipboardImage(pngData, proposedName: proposedName, in: window)
+        }
+        DispatchQueue.main.async { [weak nameField] in
+            guard let nameField, let editor = nameField.currentEditor() else { return }
+            editor.selectedRange = NSRange(location: nameField.stringValue.utf16.count, length: 0)
+        }
+    }
+
+    private func saveClipboardImage(
+        _ pngData: Data,
+        proposedName: String,
+        in window: NSWindow
+    ) {
+        guard let documentURL = fileURL else {
+            presentSaveDocumentBeforeImageAlert(in: window)
+            return
+        }
+
+        do {
+            let folder = ImageReference.normalizedAssetFolder(AppSettings.imageAssetFolder)
+            let directoryURL = documentURL.deletingLastPathComponent()
+                .appendingPathComponent(folder, isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true
+            )
+
+            let baseName = ImageReference.sanitizedImageBaseName(proposedName)
+            let imageURL = uniqueImageURL(in: directoryURL, baseName: baseName)
+            try pngData.write(to: imageURL, options: .withoutOverwriting)
+
+            guard let destination = ImageReference.destination(
+                documentURL: documentURL,
+                imageURL: imageURL,
+                style: AppSettings.imagePathStyle.referenceStyle
+            ) else { return }
+            editor.insertImageReference(destination: destination, defaultAltText: baseName)
+        } catch {
+            NSAlert(error: error).beginSheetModal(for: window)
+        }
+    }
+
+    private func uniqueImageURL(in directoryURL: URL, baseName: String) -> URL {
+        var suffix = 1
+        while true {
+            let name = suffix == 1 ? baseName : "\(baseName)-\(suffix)"
+            let candidate = directoryURL.appendingPathComponent(name).appendingPathExtension("png")
+            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            suffix += 1
+        }
+    }
+
+    private func presentSaveDocumentBeforeImageAlert(in window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = AppCopy.text("Save the document first", "请先保存文档")
+        alert.informativeText = AppCopy.text(
+            "FloralMD needs the document location before it can save or create a relative image reference.",
+            "FloralMD 需要先确定文档位置，才能保存图片或创建相对图片引用。"
+        )
+        alert.addButton(withTitle: AppCopy.text("OK", "好"))
+        alert.beginSheetModal(for: window)
+    }
+
     // MARK: - Window Setup
 
     override func makeWindowControllers() {
@@ -305,6 +451,9 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         editor.allowRemoteImages = !AppSettings.blockExternalImages
         editor.typewriterModeEnabled = AppSettings.typewriterMode
         editor.document = self
+        editor.imagePasteHandler = { [weak self] in
+            self?.handleClipboardImagePaste() ?? false
+        }
 
         // Toolbar holds the right-aligned view-mode toggle (and gives the
         // titlebar extra height for roomy traffic lights). Set it only after

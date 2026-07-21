@@ -4,6 +4,21 @@ import Testing
 
 @Suite("Font-height insertion point")
 struct InsertionPointTests {
+    @MainActor
+    private func tempImagePath() -> String {
+        let image = NSImage(size: NSSize(width: 64, height: 48))
+        image.lockFocus()
+        NSColor.systemOrange.setFill()
+        NSRect(x: 0, y: 0, width: 64, height: 48).fill()
+        image.unlockFocus()
+        let rep = NSBitmapImageRep(data: image.tiffRepresentation!)!
+        let data = rep.representation(using: .png, properties: [:])!
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("caret-image-\(UUID().uuidString).png")
+        try! data.write(to: url)
+        return url.path
+    }
+
     @Test("User line spacing enlarges the line box but not the insertion point")
     @MainActor func insertionPointIgnoresLineSpacing() {
         let editor = makeEditor()
@@ -66,6 +81,127 @@ struct InsertionPointTests {
         #expect(editor.fontHeightInsertionIndicator.displayMode == .visible)
         #expect(abs(editor.fontHeightInsertionIndicator.frame.height - fontHeight) < 0.5)
         #expect(editor.insertionIndicatorBlinkTimer?.isValid == true)
+    }
+
+    @Test("Activating a rendered image line remeasures the blinking caret")
+    @MainActor func imageActivationRemeasuresCaret() {
+        let editor = makeEditor()
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
+        scroll.documentView = editor
+        let window = NSWindow(contentRect: scroll.frame,
+                              styleMask: [.titled],
+                              backing: .buffered,
+                              defer: false)
+        window.contentView = scroll
+        #expect(window.makeFirstResponder(editor))
+
+        let content = "before\n\n![preview](\(tempImagePath()))\n\nafter"
+        editor.loadContent(content)
+        editor.setSelectedRange(NSRange(location: (content as NSString).length, length: 0))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        ensureFullLayout(editor)
+
+        editor.setSelectedRange(NSRange(location: 8, length: 0))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        ensureFullLayout(editor)
+        editor.updateFontHeightInsertionIndicator()
+
+        #expect(editor.rawSource == editor.string)
+        #expect(editor.fontHeightInsertionIndicator.displayMode == .visible)
+        #expect(abs(editor.reproInsertionIndicatorDelta() ?? .greatestFiniteMagnitude) <= 1)
+    }
+
+    @Test("Terminal caret after a rendered image uses the settled raw-line geometry")
+    @MainActor func terminalCaretAfterImageUsesSettledGeometry() throws {
+        let editor = makeEditor()
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
+        scroll.documentView = editor
+        let window = NSWindow(contentRect: scroll.frame,
+                              styleMask: [.titled],
+                              backing: .buffered,
+                              defer: false)
+        window.contentView = scroll
+        #expect(window.makeFirstResponder(editor))
+
+        let content = "before\n\n![preview](\(tempImagePath()))\n"
+        editor.loadContent(content)
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        ensureFullLayout(editor)
+
+        editor.setSelectedRange(NSRange(location: (content as NSString).length, length: 0))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        ensureFullLayout(editor)
+        let emptyLineFrame = try #require(editor.currentFontHeightInsertionPointFrame())
+
+        type("x", into: editor)
+        ensureFullLayout(editor)
+        editor.setSelectedRange(NSRange(location: editor.rawSource.utf16.count - 1, length: 0))
+        let populatedLineFrame = try #require(editor.currentFontHeightInsertionPointFrame())
+
+        #expect(abs(emptyLineFrame.minY - populatedLineFrame.minY) < 1,
+                "Image-terminal caret was \(emptyLineFrame.minY - populatedLineFrame.minY)pt from the real line")
+        #expect(editor.rawSource == editor.string)
+    }
+
+    @Test("Caret at image-only document end remains visible without a trailing newline")
+    @MainActor func imageOnlyDocumentEndCaretIsVisible() throws {
+        let editor = makeEditor()
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
+        scroll.documentView = editor
+        let window = NSWindow(contentRect: scroll.frame,
+                              styleMask: [.titled],
+                              backing: .buffered,
+                              defer: false)
+        window.contentView = scroll
+        #expect(window.makeFirstResponder(editor))
+
+        let content = "![preview|600](\(tempImagePath()))"
+        editor.loadContent(content)
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        ensureFullLayout(editor)
+
+        editor.setSelectedRange(NSRange(location: (content as NSString).length, length: 0))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        ensureFullLayout(editor)
+        editor.updateFontHeightInsertionIndicator()
+
+        let caret = try #require(editor.currentFontHeightInsertionPointFrame())
+        #expect(caret.height == ceil(editor.bodyFont.ascender - editor.bodyFont.descender))
+        #expect(scroll.contentView.bounds.intersects(caret))
+        #expect(editor.fontHeightInsertionIndicator.displayMode == .visible)
+    }
+
+    @Test("Caret at plain-text document end remains visible without a trailing newline")
+    @MainActor func plainTextDocumentEndCaretIsVisible() throws {
+        let editor = makeEditor()
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
+        scroll.documentView = editor
+        let window = NSWindow(contentRect: scroll.frame,
+                              styleMask: [.titled],
+                              backing: .buffered,
+                              defer: false)
+        window.contentView = scroll
+        #expect(window.makeFirstResponder(editor))
+
+        let content = "前面的讨论。\n\n然后应该展示个表格，展示 tpt bench 的情况"
+        #expect(!content.hasSuffix("\n"))
+        editor.loadContent(content)
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        ensureFullLayout(editor)
+
+        editor.setSelectedRange(NSRange(location: (content as NSString).length, length: 0))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        ensureFullLayout(editor)
+        editor.updateFontHeightInsertionIndicator()
+
+        let caret = try #require(editor.fontHeightInsertionPointFrame())
+        #expect(caret.height == ceil(editor.bodyFont.ascender - editor.bodyFont.descender))
+        #expect(scroll.contentView.bounds.intersects(caret))
+        #expect(editor.fontHeightInsertionIndicator.displayMode == .visible)
+        #expect(editor.rawSource == editor.string)
     }
 
     @Test("Terminal empty-line caret keeps custom spacing before typing")

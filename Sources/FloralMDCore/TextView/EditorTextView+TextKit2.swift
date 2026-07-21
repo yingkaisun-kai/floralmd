@@ -172,6 +172,11 @@ public final class BlockDecorationList: NSObject, @unchecked Sendable {
 /// docs/investigations/archives/callout-title-wrap-investigation.md). Overlays that can share a line
 /// with wrapping text (the custom-callout-title icon) must use the path form.
 public final class FragmentOverlay: NSObject, @unchecked Sendable {
+    public enum Role: Sendable {
+        case presentation
+        case resizableImage
+    }
+
     public let image: NSImage?
     /// Stroked path in bounds-local coordinates (y-down, origin at the
     /// bounds' top-left), pre-scaled to the bounds size.
@@ -179,13 +184,20 @@ public final class FragmentOverlay: NSObject, @unchecked Sendable {
     public let pathColor: NSColor?
     public let pathLineWidth: CGFloat
     public let bounds: CGRect
+    public let role: Role
 
-    public init(image: NSImage, bounds: CGRect) {
+    /// A resize drag promotes this bitmap into the editor's foreground preview
+    /// view. Suppress the fragment copy so shrinking cannot reveal the stored-
+    /// size image underneath while TextKit coalesces display updates.
+    nonisolated(unsafe) var suppressesImageDrawing = false
+
+    public init(image: NSImage, bounds: CGRect, role: Role = .presentation) {
         self.image = image
         self.path = nil
         self.pathColor = nil
         self.pathLineWidth = 0
         self.bounds = bounds
+        self.role = role
         super.init()
     }
 
@@ -195,6 +207,7 @@ public final class FragmentOverlay: NSObject, @unchecked Sendable {
         self.pathColor = color
         self.pathLineWidth = lineWidth
         self.bounds = bounds
+        self.role = .presentation
         super.init()
     }
 
@@ -202,7 +215,7 @@ public final class FragmentOverlay: NSObject, @unchecked Sendable {
         guard let other = object as? FragmentOverlay else { return false }
         return other.image === image && other.path == path
             && other.pathColor == pathColor && other.pathLineWidth == pathLineWidth
-            && other.bounds == bounds
+            && other.bounds == bounds && other.role == role
     }
 
     public override var hash: Int { Int(bounds.width) ^ Int(bounds.height) }
@@ -385,7 +398,7 @@ final class DecoratedTextLayoutFragment: NSTextLayoutFragment {
         for (offset, overlay) in overlays {
             guard let rect = overlayRect(anchorOffset: offset, overlay: overlay) else { continue }
             let drawRect = rect.offsetBy(dx: point.x, dy: point.y)
-            if let image = overlay.image {
+            if let image = overlay.image, !overlay.suppressesImageDrawing {
                 // Draw the (resolution-independent) NSImage into the flipped context,
                 // so it rasterizes at the screen's backing scale — crisp on Retina,
                 // and positioned precisely. (Converting to a CGImage first would bake
@@ -446,7 +459,7 @@ final class DecoratedTextLayoutFragment: NSTextLayoutFragment {
 
     /// Fragment-local rect for an overlay image, anchored to the character at
     /// the given paragraph-relative offset.
-    private func overlayRect(anchorOffset: Int, overlay: FragmentOverlay) -> CGRect? {
+    func overlayRect(anchorOffset: Int, overlay: FragmentOverlay) -> CGRect? {
         guard let line = textLineFragments.first(where: {
             NSLocationInRange(anchorOffset, $0.characterRange)
         }) ?? textLineFragments.last else { return nil }
@@ -455,10 +468,11 @@ final class DecoratedTextLayoutFragment: NSTextLayoutFragment {
         // Baseline (flipped coords): the line's glyph origin sits at its
         // typographic origin plus the ascent-derived glyph origin.
         let baselineY = line.typographicBounds.minY + line.glyphOrigin.y
-        return CGRect(x: anchorX + overlay.bounds.minX,
-                      y: baselineY - overlay.bounds.height - overlay.bounds.minY,
-                      width: overlay.bounds.width,
-                      height: overlay.bounds.height)
+        let bounds = overlay.bounds
+        return CGRect(x: anchorX + bounds.minX,
+                      y: baselineY - bounds.height - bounds.minY,
+                      width: bounds.width,
+                      height: bounds.height)
     }
 
     /// Fragment-local y of the first line's glyph top (baseline minus the

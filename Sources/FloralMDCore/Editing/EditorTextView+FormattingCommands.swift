@@ -79,6 +79,22 @@ extension EditorTextView {
     @objc public func formatImage(_ sender: Any?)         { insertImage() }
     @objc public func formatFootnote(_ sender: Any?)      { insertFootnote() }
 
+    /// Inserts an already-resolved image destination as one undoable Markdown
+    /// edit. The selected source becomes alt text; otherwise `defaultAltText`
+    /// is used. File selection and file I/O stay in the NSDocument app shell.
+    public func insertImageReference(destination: String, defaultAltText: String) {
+        guard viewMode != .reading else { return }
+        let selection = selectedRange()
+        let source = rawSource as NSString
+        let altText = selection.length > 0
+            ? source.substring(with: selection)
+            : defaultAltText
+        let markdown = ImageReference.markdown(altText: altText, destination: destination)
+        let caret = selection.location + (markdown as NSString).length
+        applyFormattingEdit(rawRange: selection, replacement: markdown,
+                            select: NSRange(location: caret, length: 0))
+    }
+
     // MARK: - Block-level commands
 
     @objc public func formatBulletedList(_ sender: Any?)  { toggleLinePrefix("- ") }

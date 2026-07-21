@@ -11,6 +11,36 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.7.9] — 2026-07-21
+
+### 中文
+
+#### 新增
+- 现在可以从格式菜单选择本地图片并插入 Markdown 引用，也可以直接粘贴剪贴板
+  图片、命名后保存到当前文档旁的可配置相对目录。图片路径可按设置写成绝对路径
+  或相对于 Markdown 文件的路径。
+- 渲染后的图片现在支持从右下角等比例拖动缩放；松手后会把宽度保存为 Obsidian
+  兼容的 Markdown 后缀，编辑与阅读模式使用同一尺寸。
+
+#### 修复
+- 修复没有末尾换行的文档在最后一个字符后可能不显示光标的问题，并提高图片缩放
+  期间预览、悬停边框与拖动把手的刷新稳定性。
+
+### English
+
+#### Added
+- Local images can now be inserted from the Format menu as Markdown references.
+  Clipboard images can also be named and saved into a configurable folder beside
+  the current document, using either absolute or Markdown-relative paths.
+- Rendered images can now be resized proportionally from their bottom-right
+  handle. The selected width is stored as an Obsidian-compatible Markdown suffix
+  and shared by Edit and Read modes.
+
+#### Fixed
+- Fixed the caret sometimes disappearing after the final character of documents
+  without a trailing newline, and improved the refresh stability of image resize
+  previews, hover borders, and drag handles.
+
 ## [2026.7.8] — 2026-07-20
 
 ### 中文

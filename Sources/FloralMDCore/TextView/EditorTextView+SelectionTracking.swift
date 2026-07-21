@@ -86,6 +86,12 @@ extension EditorTextView {
                     }
                 }
                 if deferred { self.scheduleProgressiveStyling() }
+                // Cross-block activation can collapse a tall image overlay to
+                // one raw Markdown line after the selection notification's
+                // first indicator measurement. Measure again against the
+                // settled fragment geometry so the explicit blinking caret
+                // cannot remain at the old image baseline.
+                self.scheduleFontHeightInsertionIndicatorUpdate()
             }
             return
         } else if newActiveIndex == activeBlockIndex {

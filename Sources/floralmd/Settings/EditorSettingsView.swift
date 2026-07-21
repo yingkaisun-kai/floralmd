@@ -6,6 +6,8 @@ struct EditorSettingsView: View {
     @AppStorage(AppSettings.Key.typewriterMode) private var typewriterMode = true
     @AppStorage(AppSettings.Key.sourceMode) private var sourceMode = false
     @AppStorage(AppSettings.Key.showMinimap) private var showMinimap = true
+    @AppStorage(AppSettings.Key.imagePathStyle) private var imagePathStyle = AppSettings.ImagePathStyle.absolute
+    @AppStorage(AppSettings.Key.imageAssetFolder) private var imageAssetFolder = "assets"
 
     private func tr(_ en: String, _ zh: String) -> String {
         AppCopy.text(en, zh, language: language)
@@ -29,6 +31,33 @@ struct EditorSettingsView: View {
                             "输入时让插入点保持在窗口的垂直中央。"))
                         .settingsSupportingText()
                         .padding(.leading, 20)
+
+                    Divider().padding(.vertical, 4)
+
+                    HStack {
+                        Text(tr("Image path", "图片路径"))
+                        Spacer()
+                        Picker("", selection: $imagePathStyle) {
+                            ForEach(AppSettings.ImagePathStyle.allCases) { style in
+                                Text(style.label).tag(style)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 150)
+                    }
+
+                    HStack {
+                        Text(tr("Pasted image folder", "粘贴图片文件夹"))
+                        Spacer()
+                        TextField("assets", text: $imageAssetFolder)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 150)
+                    }
+                    Text(tr(
+                        "The folder stays relative to each Markdown file. Absolute paths affect only the inserted link.",
+                        "文件夹始终相对于当前 Markdown 文件；绝对路径选项只影响插入的链接。"
+                    ))
+                    .settingsSupportingText()
                 }
             }
 

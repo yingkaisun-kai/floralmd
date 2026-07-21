@@ -285,10 +285,14 @@ extension EditorTextView {
             // line box from the preceding newline so Return can scroll now.
             // TextKit keeps both user spacing values outside typographicBounds;
             // omitting them makes the caret jump only when the first glyph
-            // creates real geometry for this paragraph.
+            // creates real geometry for this paragraph. Never inherit the
+            // preceding line's height: a rendered image can make that line
+            // hundreds of points tall and would center the terminal caret far
+            // below the actual empty line.
             let spacing = theme.lineSpacing + theme.paragraphSpacingBefore
+            let lineHeight = ceil(bodyFont.ascender - bodyFont.descender)
             return CGRect(x: previous.minX, y: previous.maxY + spacing,
-                          width: previous.width, height: previous.height)
+                          width: previous.width, height: lineHeight)
         }
         guard let tlm = textLayoutManager else { return nil }
         guard let loc = tlm.location(tlm.documentRange.location, offsetBy: offset)

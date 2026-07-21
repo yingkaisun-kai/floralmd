@@ -190,9 +190,13 @@ extension SyntaxHighlighter.SpanCollector {
         let full = nsRange(for: range)
         let delims = delimiterRanges(parent: full, children: image.children)
         let content = contentRange(full: full, delims: delims)
+        let displaySize = ImageReference.displaySize(
+            in: (source as NSString).substring(with: content)
+        )
 
         spans.append(SyntaxHighlighter.Span(
-            kind: .image(destination: image.source ?? "", width: nil, height: nil),
+            kind: .image(destination: image.source ?? "",
+                         width: displaySize.width, height: displaySize.height),
             fullRange: full,
             contentRange: content,
             delimiterRanges: delims

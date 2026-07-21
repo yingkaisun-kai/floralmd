@@ -168,6 +168,14 @@ struct HTMLRendererCoreTests {
         #expect(out.contains("<img class=\"md-image\" data-src=\"pic.png\" alt=\"alt text\">"))
     }
 
+    @Test("Obsidian image dimensions become HTML dimensions without leaking into alt text")
+    func obsidianImageDimensions() {
+        let out = html("![alt text|480x320](pic.png)")
+        #expect(out.contains(
+            "<img class=\"md-image\" data-src=\"pic.png\" alt=\"alt text\" width=\"480\" height=\"320\">"
+        ))
+    }
+
     @Test("Wikilink renders as a private-scheme anchor with encoded target")
     func wikilink() {
         let out = html("see [[My Note#Heading]] here")

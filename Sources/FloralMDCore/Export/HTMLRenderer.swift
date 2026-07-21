@@ -407,9 +407,12 @@ struct HTMLRenderer: MarkupVisitor {
         // inlines it in a second pass (it needs the document directory + the
         // remote-image policy, which the pure renderer doesn't have). No `src`
         // here ⇒ if the asset pass can't resolve it, the alt text shows.
-        let alt = Self.attr(Self.plainText(of: image))
+        let displaySize = ImageReference.displaySize(in: Self.plainText(of: image))
+        let alt = Self.attr(displaySize.altText)
         let src = Self.attr(image.source ?? "")
-        return "<img class=\"md-image\" data-src=\"\(src)\" alt=\"\(alt)\">"
+        let width = displaySize.width.map { " width=\"\($0)\"" } ?? ""
+        let height = displaySize.height.map { " height=\"\($0)\"" } ?? ""
+        return "<img class=\"md-image\" data-src=\"\(src)\" alt=\"\(alt)\"\(width)\(height)>"
     }
 
     // Inline HTML (§6.10): full GFM raw-HTML passthrough, filtered through

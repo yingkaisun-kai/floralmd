@@ -32,6 +32,175 @@ struct ImageRenderingTests {
         #expect(dests == ["pic.png"])
     }
 
+    @Test("Obsidian image-size suffix controls overlay width")
+    func obsidianWidthSuffix() {
+        let editor = makeEditor()
+        let path = tempPNGPath()
+        let styled = editor.styleBlock("![alt|12](\(path))", cursorPosition: nil)
+        let overlay = styled.attribute(.fragmentOverlay, at: 0,
+                                       effectiveRange: nil) as? FragmentOverlay
+        #expect(overlay?.bounds.size == CGSize(width: 12, height: 8))
+    }
+
+    @Test("Resize drag updates the foreground preview without changing TextKit bounds")
+    func resizeDragUsesForegroundPreview() {
+        let editor = makeEditor()
+        editor.loadContent("![preview](image.png)")
+        let image = NSImage(size: NSSize(width: 80, height: 60))
+        let overlay = FragmentOverlay(
+            image: image,
+            bounds: NSRect(x: 0, y: 0, width: 80, height: 60),
+            role: .resizableImage
+        )
+
+        let oldFrame = NSRect(x: 10, y: 10, width: 80, height: 60)
+        let hit = ImageOverlayHit(anchor: 0, sourceRange: NSRange(location: 0, length: 21),
+                                  frame: oldFrame, overlay: overlay)
+        editor.imageResizeSession = ImageResizeSession(
+            hit: hit,
+            startPoint: .zero,
+            selectionBefore: NSRange(location: 0, length: 0),
+            previewFrame: oldFrame
+        )
+        for step in 1...30 {
+            #expect(editor.updateImageResize(to: CGPoint(x: -CGFloat(step), y: 0)))
+            #expect(editor.imageResizeSession?.previewFrame.width == 80 - CGFloat(step))
+            #expect(editor.imageResizeChromeView.frame.width == 84 - CGFloat(step))
+        }
+
+        #expect(overlay.bounds.size == CGSize(width: 80, height: 60))
+        #expect(editor.imageResizeSession?.previewFrame
+                == NSRect(x: 10, y: 10, width: 50, height: 37.5))
+        #expect(editor.imageResizeChromeView.frame
+                == NSRect(x: 8, y: 8, width: 54, height: 41.5))
+        #expect(!editor.imageResizeChromeView.isHidden)
+        #expect(editor.rawSource == "![preview](image.png)")
+    }
+
+    @Test("Suppressing the fragment image leaves no stored-size duplicate")
+    func suppressedFragmentImageHasNoDuplicate() throws {
+        let editor = makeEditor()
+        let content = "![preview](\(tempPNGPath()))\n\nafter"
+        editor.loadContent(content)
+        editor.setSelectedRange(NSRange(location: (content as NSString).length, length: 0))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 180))
+        scroll.documentView = editor
+        let window = NSWindow(contentRect: scroll.frame,
+                              styleMask: [.titled],
+                              backing: .buffered,
+                              defer: false)
+        window.contentView = scroll
+        ensureFullLayout(editor)
+
+        let tlm = try #require(editor.textLayoutManager)
+        let location = try #require(tlm.location(tlm.documentRange.location, offsetBy: 0))
+        let fragment = try #require(tlm.textLayoutFragment(for: location)
+                                    as? DecoratedTextLayoutFragment)
+        let pair = try #require(fragment.overlays.first(where: {
+            $0.overlay.role == .resizableImage
+        }))
+        pair.overlay.suppressesImageDrawing = true
+        editor.needsDisplay = true
+        let hiddenRep = try #require(editor.bitmapImageRepForCachingDisplay(in: editor.bounds))
+        editor.cacheDisplay(in: editor.bounds, to: hiddenRep)
+        pair.overlay.suppressesImageDrawing = false
+        var hiddenBluePixels = 0
+        for y in 0 ..< hiddenRep.pixelsHigh {
+            for x in 0 ..< hiddenRep.pixelsWide {
+                guard let color = hiddenRep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      color.blueComponent > 0.7,
+                      color.redComponent < 0.35,
+                      color.greenComponent < 0.75 else { continue }
+                hiddenBluePixels += 1
+            }
+        }
+        #expect(hiddenBluePixels == 0,
+                "Stored-size fragment image remained under the resize preview")
+        #expect(editor.rawSource == content)
+    }
+
+    @Test("Resize chrome is a topmost pass-through view that follows its image frame")
+    func resizeChromeViewFollowsImageFrame() throws {
+        let chrome = ImageResizeChromeView(frame: .zero)
+        let first = NSRect(x: 30, y: 40, width: 120, height: 80)
+        chrome.show(around: first, accentColor: .systemRed,
+                    backgroundColor: .white, isResizing: false)
+
+        #expect(chrome.frame == first.insetBy(dx: -2, dy: -2))
+        #expect(!chrome.isHidden)
+        #expect(chrome.hitTest(NSPoint(x: 20, y: 20)) == nil)
+
+        let resized = NSRect(x: 30, y: 40, width: 210, height: 140)
+        let previewImage = try #require(NSImage(contentsOfFile: tempPNGPath()))
+        chrome.show(around: resized, image: previewImage, accentColor: .systemRed,
+                    backgroundColor: .white, isResizing: true)
+        #expect(chrome.frame == resized.insetBy(dx: -2, dy: -2))
+
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            chrome.appearance = NSAppearance(named: appearanceName)
+            chrome.needsDisplay = true
+            let rep = try #require(chrome.bitmapImageRepForCachingDisplay(in: chrome.bounds))
+            chrome.cacheDisplay(in: chrome.bounds, to: rep)
+            var redPixels = 0
+            var bluePixels = 0
+            for y in 0 ..< rep.pixelsHigh {
+                for x in 0 ..< rep.pixelsWide {
+                    guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+                    else { continue }
+                    if color.redComponent > 0.55,
+                       color.greenComponent < 0.55,
+                       color.blueComponent < 0.55 {
+                        redPixels += 1
+                    }
+                    if color.blueComponent > 0.7,
+                       color.redComponent < 0.35,
+                       color.greenComponent < 0.75 {
+                        bluePixels += 1
+                    }
+                }
+            }
+            #expect(redPixels > 100,
+                    "Resize chrome was not visible in \(appearanceName.rawValue)")
+            #expect(bluePixels > 1_000,
+                    "Resize image preview was not visible in \(appearanceName.rawValue)")
+        }
+
+        chrome.hide()
+        #expect(chrome.isHidden)
+    }
+
+    @Test("Image hover hit-testing covers the visible image above its text fragment")
+    func hoverHitTestingUsesImageBounds() throws {
+        let editor = makeEditor()
+        let content = "before\n\n![preview|200](\(tempPNGPath()))\n\nafter"
+        editor.loadContent(content)
+        editor.setSelectedRange(NSRange(location: (content as NSString).length, length: 0))
+        ensureFullLayout(editor)
+
+        let tlm = try #require(editor.textLayoutManager)
+        let imageOffset = (content as NSString).range(of: "![preview").location
+        let location = try #require(tlm.location(tlm.documentRange.location,
+                                                 offsetBy: imageOffset))
+        let fragment = try #require(tlm.textLayoutFragment(for: location)
+                                    as? DecoratedTextLayoutFragment)
+        let pair = try #require(fragment.overlays.first(where: {
+            $0.overlay.role == .resizableImage
+        }))
+        let localRect = try #require(fragment.overlayRect(anchorOffset: pair.offset,
+                                                          overlay: pair.overlay))
+        let imageFrame = localRect.offsetBy(
+            dx: fragment.layoutFragmentFrame.minX + editor.textContainerOrigin.x,
+            dy: fragment.layoutFragmentFrame.minY + editor.textContainerOrigin.y
+        )
+        let hit = editor.imageOverlayHit(at: CGPoint(x: imageFrame.midX,
+                                                     y: imageFrame.minY + 4))
+
+        #expect(hit?.overlay === pair.overlay)
+        #expect(hit?.frame == imageFrame)
+    }
+
     @Test("Rendered image draws an overlay and hides the raw markdown")
     func rendersOverlay() {
         let editor = makeEditor()

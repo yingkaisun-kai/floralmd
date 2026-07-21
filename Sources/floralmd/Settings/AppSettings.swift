@@ -7,6 +7,25 @@ import AppKit
 import FloralMDCore
 
 enum AppSettings {
+    enum ImagePathStyle: String, CaseIterable, Identifiable {
+        case absolute
+        case relative
+        var id: Self { self }
+        var label: String {
+            switch self {
+            case .absolute: return AppCopy.text("Absolute path", "绝对路径")
+            case .relative: return AppCopy.text("Relative path", "相对路径")
+            }
+        }
+
+        var referenceStyle: ImageReference.PathStyle {
+            switch self {
+            case .absolute: return .absolute
+            case .relative: return .relative
+            }
+        }
+    }
+
     enum StartupAction: String, CaseIterable, Identifiable {
         case createNewDocument
         case doNothing
@@ -111,6 +130,8 @@ enum AppSettings {
         // These predate the Editor settings pane; keep their strings for compatibility.
         static let sourceMode = "settings.view.sourceMode"
         static let showMinimap = "settings.appearance.showMinimap"
+        static let imagePathStyle = "settings.editor.imagePathStyle"
+        static let imageAssetFolder = "settings.editor.imageAssetFolder"
         static let sendCrashLogs = "settings.advanced.sendCrashLogs"
         static let sentCrashReports = "settings.advanced.sentCrashReports"
         static let lastWindowWidth  = "settings.window.lastWidth"
@@ -197,6 +218,28 @@ enum AppSettings {
             return UserDefaults.standard.bool(forKey: Key.showMinimap)
         }
         set { UserDefaults.standard.set(newValue, forKey: Key.showMinimap) }
+    }
+
+    /// Path syntax used only for newly inserted image references. Existing
+    /// Markdown is never rewritten. Absolute paths are the explicit default.
+    static var imagePathStyle: ImagePathStyle {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: Key.imagePathStyle),
+                  let style = ImagePathStyle(rawValue: raw) else { return .absolute }
+            return style
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: Key.imagePathStyle) }
+    }
+
+    /// Relative directory beside each saved Markdown document where clipboard
+    /// images are stored. Invalid paths safely resolve to `assets`.
+    static var imageAssetFolder: String {
+        get {
+            ImageReference.normalizedAssetFolder(
+                UserDefaults.standard.string(forKey: Key.imageAssetFolder) ?? "assets"
+            )
+        }
+        set { UserDefaults.standard.set(newValue, forKey: Key.imageAssetFolder) }
     }
 
     /// Read mode: render runs of blank lines as proportional vertical space

@@ -131,13 +131,17 @@ extension EditorTextView {
         if let url = URL(string: dest), let scheme = url.scheme {
             return scheme == "file" ? url : nil
         }
-        if dest.hasPrefix("/") { return URL(fileURLWithPath: dest) }
-        if dest.hasPrefix("~") {
-            return URL(fileURLWithPath: (dest as NSString).expandingTildeInPath)
+        // Generated Markdown destinations are percent-encoded so spaces,
+        // parentheses, and `#` remain unambiguous. Read mode already decodes
+        // them before resolving; Edit mode must use the same path semantics.
+        let decoded = dest.removingPercentEncoding ?? dest
+        if decoded.hasPrefix("/") { return URL(fileURLWithPath: decoded) }
+        if decoded.hasPrefix("~") {
+            return URL(fileURLWithPath: (decoded as NSString).expandingTildeInPath)
         }
         // Relative to the document's directory.
         if let docDir = document?.fileURL?.deletingLastPathComponent() {
-            return docDir.appendingPathComponent(dest)
+            return docDir.appendingPathComponent(decoded)
         }
         return nil
     }
@@ -179,7 +183,8 @@ extension EditorTextView {
             size = NSSize(width: maxWidth, height: size.height * (maxWidth / size.width))
         }
         return FragmentOverlay(image: image,
-                               bounds: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+                               bounds: CGRect(x: 0, y: 0, width: size.width, height: size.height),
+                               role: .resizableImage)
     }
 
     /// Draws "icon  reason" into one image (same technique as the callout

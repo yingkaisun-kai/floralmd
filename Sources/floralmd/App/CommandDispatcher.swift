@@ -158,7 +158,7 @@ enum CommandDispatcher {
         case "format.wikilink":
             return Invocation(#selector(EditorTextView.formatWikilink(_:)))
         case "format.image":
-            return Invocation(#selector(EditorTextView.formatImage(_:)))
+            return Invocation(#selector(Document.insertImageReference(_:)))
         case "format.thematicBreak":
             return Invocation(#selector(EditorTextView.formatThematicBreak(_:)))
         case "format.footnote":

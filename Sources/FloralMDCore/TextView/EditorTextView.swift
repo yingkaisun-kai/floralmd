@@ -41,6 +41,31 @@ public class EditorTextView: NSTextView {
     /// Set by Document.makeWindowControllers(). Not available in unit tests.
     public weak var document: NSDocument?
 
+    /// The app target owns clipboard image persistence and naming UI. Core only
+    /// gives it first refusal; every non-image paste continues through AppKit's
+    /// ordinary text path unchanged.
+    public var imagePasteHandler: (() -> Bool)?
+
+    public override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        var types = super.readablePasteboardTypes
+        for imageType in [NSPasteboard.PasteboardType.png, .tiff] where !types.contains(imageType) {
+            types.append(imageType)
+        }
+        return types
+    }
+
+    public override func paste(_ sender: Any?) {
+        if imagePasteHandler?() == true { return }
+        // Never let NSTextView turn an unhandled bitmap into an attachment;
+        // storage must remain raw Markdown even if the app handler is absent.
+        let types = NSPasteboard.general.types ?? []
+        if types.contains(.png) || types.contains(.tiff) {
+            NSSound.beep()
+            return
+        }
+        super.paste(sender)
+    }
+
     // MARK: - State (internal for @testable import)
 
     public var rawSource: String = ""
@@ -102,6 +127,10 @@ public class EditorTextView: NSTextView {
     let fontHeightInsertionIndicator = NSTextInsertionIndicator(frame: .zero)
     var insertionIndicatorUpdateScheduled = false
     var insertionIndicatorBlinkTimer: Timer?
+    var imageResizeTrackingArea: NSTrackingArea?
+    var hoveredImageOverlay: ImageOverlayHit?
+    var imageResizeSession: ImageResizeSession?
+    let imageResizeChromeView = ImageResizeChromeView(frame: .zero)
     /// Documents at or below this UTF-16 length are laid out in full once
     /// styling converges, eliminating TextKit 2 height estimates (and the
     /// scroll jumps they cause). See `scheduleFullLayoutSettle`.
@@ -315,6 +344,8 @@ public class EditorTextView: NSTextView {
         fontHeightInsertionIndicator.color = accentColor
         fontHeightInsertionIndicator.displayMode = .hidden
         fontHeightInsertionIndicator.automaticModeOptions = []
+        imageResizeChromeView.isHidden = true
+        addSubview(imageResizeChromeView)
         addSubview(fontHeightInsertionIndicator)
         selectedTextAttributes = [
             .backgroundColor: selectionHighlightColor,
@@ -440,6 +471,36 @@ public class EditorTextView: NSTextView {
         scheduleFontHeightInsertionIndicatorUpdate()
     }
 
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let imageResizeTrackingArea { removeTrackingArea(imageResizeTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        imageResizeTrackingArea = area
+        addTrackingArea(area)
+    }
+
+    public override func resetCursorRects() {
+        super.resetCursorRects()
+        if let hit = hoveredImageOverlay {
+            addCursorRect(imageResizeHandleRect(for: hit.frame), cursor: .resizeLeftRight)
+        }
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        updateImageResizeHover(at: convert(event.locationInWindow, from: nil))
+        super.mouseMoved(with: event)
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        clearImageResizeHover()
+        super.mouseExited(with: event)
+    }
+
     // MARK: - Link Following
 
     #if DEBUG
@@ -461,6 +522,8 @@ public class EditorTextView: NSTextView {
     /// that the resulting selection change does not re-center the viewport —
     /// centering when the user merely clicks somewhere feels glitchy.
     public override func mouseDown(with event: NSEvent) {
+        if beginImageResizeIfNeeded(with: event) { return }
+        clearImageResizeHover()
         if event.modifierFlags.contains(.command) {
             if let target = wikiTarget(at: event) {
                 followWikiLink(target)
@@ -474,6 +537,16 @@ public class EditorTextView: NSTextView {
         suppressTypewriterCentering = true
         super.mouseDown(with: event)
         suppressTypewriterCentering = false
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        if updateImageResize(with: event) { return }
+        super.mouseDragged(with: event)
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        if finishImageResize(with: event) { return }
+        super.mouseUp(with: event)
     }
 
     /// The storage character index directly under a mouse event, or nil if the
