@@ -19,7 +19,7 @@ struct InsertionPointTests {
         return url.path
     }
 
-    @Test("User line spacing enlarges the line box but not the insertion point")
+    @Test("User spacing advances an empty paragraph without inflating its line box")
     @MainActor func insertionPointIgnoresLineSpacing() {
         let editor = makeEditor()
         var theme = EditorTheme.default
@@ -29,14 +29,22 @@ struct InsertionPointTests {
         editor.setSelectedRange(NSRange(location: 11, length: 0))
         ensureFullLayout(editor)
 
+        let previousFrame = editor.lineRect(forCharacterAt: 10)
         let lineFrame = editor.lineRect(forCharacterAt: 11)
-        let insertionFrame = editor.fontHeightInsertionPointFrame()
+        let insertionFrame = editor.currentFontHeightInsertionPointFrame()
         let fontHeight = ceil(editor.bodyFont.ascender - editor.bodyFont.descender)
 
+        #expect(previousFrame != nil)
         #expect(lineFrame != nil)
         #expect(insertionFrame != nil)
         #expect(abs((insertionFrame?.height ?? 0) - fontHeight) < 0.5)
-        #expect((lineFrame?.height ?? 0) > (insertionFrame?.height ?? 0) + 20)
+        let expectedY = (previousFrame?.maxY ?? 0)
+            + theme.lineSpacing + theme.paragraphSpacingBefore
+        #expect(abs((lineFrame?.minY ?? 0) - expectedY) < 0.5)
+        type("x", into: editor)
+        ensureFullLayout(editor)
+        let populatedLineFrame = editor.lineRect(forCharacterAt: 11)
+        #expect(abs((lineFrame?.height ?? 0) - (populatedLineFrame?.height ?? 0)) < 0.5)
     }
 
     @Test("Terminal blank lines still use a font-height insertion point")
@@ -236,6 +244,44 @@ struct InsertionPointTests {
 
         #expect(abs(emptyLineFrame.minY - populatedLineFrame.minY) < 1,
                 "Return-only caret was \(populatedLineFrame.minY - emptyLineFrame.minY)pt above the real line")
+        #expect(editor.rawSource == editor.string)
+    }
+
+    @Test("Synthetic terminal geometry wins when TextKit absorbs EOF into the prior fragment")
+    @MainActor func terminalGeometryWinsOverAbsorbedEOFFragment() throws {
+        let absorbedPriorFragment = NSRect(x: 20, y: 40, width: 2, height: 19)
+        let syntheticTerminalLine = NSRect(x: 20, y: 96, width: 2, height: 19)
+
+        let resolved = try #require(EditorTextView.preferredInsertionPointFrame(
+            measured: absorbedPriorFragment,
+            syntheticEmptyLine: syntheticTerminalLine
+        ))
+
+        #expect(resolved == syntheticTerminalLine)
+    }
+
+    @Test("One and consecutive trailing newlines include both custom spacing values",
+          arguments: [1, 2])
+    @MainActor func trailingNewlineGeometryIncludesCustomSpacing(_ newlineCount: Int) throws {
+        let editor = makeEditor()
+        var theme = EditorTheme.default
+        theme.lineSpacing = 31
+        theme.paragraphSpacingBefore = 17
+        editor.applyTheme(theme, persist: false)
+
+        let source = "first" + String(repeating: "\n", count: newlineCount)
+        editor.loadContent(source)
+        let end = (source as NSString).length
+        editor.setSelectedRange(NSRange(location: end, length: 0))
+        ensureFullLayout(editor)
+
+        let previous = try #require(editor.lineRect(forCharacterAt: end - 1))
+        let terminal = try #require(editor.lineRect(forCharacterAt: end))
+        let caret = try #require(editor.currentFontHeightInsertionPointFrame())
+        let expectedY = previous.maxY + theme.lineSpacing + theme.paragraphSpacingBefore
+
+        #expect(abs(terminal.minY - expectedY) < 0.5)
+        #expect(abs(caret.midY - terminal.midY) < 0.5)
         #expect(editor.rawSource == editor.string)
     }
 

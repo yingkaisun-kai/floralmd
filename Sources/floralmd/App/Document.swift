@@ -12,6 +12,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
     var editor: EditorTextView!
     private(set) var isQuickCapture = false
+    private var preventsAutomaticTabbingOnNextShow = false
     private var suppressWindowSizePersistence = false
     private var statusBar: StatusBarView!
     private var outlineSidebar: OutlineSidebarView!
@@ -41,6 +42,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     private var gitBaseline: GitFileBaseline?
     private var usesTranslucentPinnedWindowBackground = false
     private var allSpacesPinnedPanelController: AllSpacesPinnedPanelController?
+    private var untitledWelcomeView: UntitledWelcomeView?
 
     /// Content loaded from disk before the editor window exists.
     /// `nonisolated(unsafe)` because `read(from:ofType:)` may be called
@@ -63,6 +65,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     private var untitledSaveGeneration = 0
     private var hasPresentedUntitledSaveFailure = false
     private var sidebarSessionState = DocumentSidebarSessionState()
+    private let gitCurrentFileCommitService = GitCurrentFileCommitService()
+    private var isCommittingCurrentFile = false
 
     override var fileURL: URL? {
         didSet {
@@ -71,6 +75,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
                 MainActor.assumeIsolated {
                     if self?.fileURL != nil { self?.cancelScheduledUntitledSave() }
                     self?.restartExternalFileMonitor()
+                    self?.refreshUntitledWelcomePresentation(animated: true)
                 }
             }
         }
@@ -416,7 +421,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         // A compact capture is a transient entry surface, not another tab in a
         // full-size document group. Decide this before the window is shown so
         // AppKit cannot auto-merge it and shrink an ordinary document window.
-        if isQuickCapture {
+        if isQuickCapture || preventsAutomaticTabbingOnNextShow {
             window.tabbingMode = .disallowed
         }
         window.level = .normal
@@ -484,8 +489,12 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
         // The text view fills the whole window; the status bar floats over its
         // bottom edge, revealed on hover.
+        let preferredNavigationWidth = DocumentNavigationSidebarWidthPolicy.clamp(
+            sidebarSessionState.navigationWidth,
+            containerWidth: contentBounds.width
+        )
         let navigationWidth = sidebarSessionState.isNavigationExpanded
-            ? DocumentNavigationSidebarView.expandedWidth
+            ? preferredNavigationWidth
             : DocumentNavigationSidebarView.collapsedWidth
         let outlineWidth = sidebarSessionState.isOutlineExpanded
             ? OutlineSidebarView.expandedWidth
@@ -516,9 +525,13 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
         containerView = DocumentContainerView(frame: contentBounds)
         containerView.autoresizesSubviews = true
+        installUntitledWelcome(frame: initialLayout.editorFrame)
         navigationSidebar = DocumentNavigationSidebarView(
-            frame: initialLayout.navigationSidebarFrame
+            frame: initialLayout.navigationSidebarFrame,
+            mode: sidebarSessionState.navigationMode,
+            gitMode: sidebarSessionState.gitMode
         )
+        navigationSidebar.setPreferredExpandedWidth(preferredNavigationWidth)
         navigationSidebar.onOpenFile = { [weak self] url in
             guard let self, let controller = NSDocumentController.shared as? DocumentController else { return }
             controller.openDocumentTab(at: url, from: self)
@@ -542,17 +555,28 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
                   let controller = NSDocumentController.shared as? DocumentController else { return }
             controller.moveFileToTrash(at: url, from: self)
         }
+        navigationSidebar.onCommitCurrentFile = { [weak self] in
+            self?.commitCurrentFile(nil)
+        }
         navigationSidebar.onWidthChange = { [weak self] width, duration in
             guard let self else { return }
-            self.sidebarSessionState.setNavigationExpanded(
-                width == DocumentNavigationSidebarView.expandedWidth
-            )
+            self.sidebarSessionState.setNavigationExpanded(width > 0)
+            if width > 0 { self.sidebarSessionState.setNavigationWidth(width) }
             self.refreshSidebarControlAppearance()
             self.updateDocumentLayout(navigationSidebarWidth: width,
                                       outlineSidebarWidth: self.currentOutlineWidth,
                                       duration: duration)
         }
+        navigationSidebar.onModeChange = { [weak self] mode, gitMode in
+            self?.sidebarSessionState.setNavigationMode(mode)
+            self?.sidebarSessionState.setGitMode(gitMode)
+        }
         containerView.addSubview(scrollView)
+        if let untitledWelcomeView {
+            // Foreground placement gives file controls native hit testing;
+            // transparent non-control hits still continue to the editor.
+            containerView.addSubview(untitledWelcomeView)
+        }
         containerView.addSubview(minimapView)
         containerView.addSubview(statusBar)   // overlay, on top of the text
         containerView.addSubview(navigationSidebar)
@@ -680,6 +704,50 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         refreshNavigationSidebar()
     }
 
+    private func installUntitledWelcome(frame: NSRect) {
+        guard fileURL == nil else { return }
+        let controller = NSDocumentController.shared as? DocumentController
+
+        let welcome = UntitledWelcomeView(
+            frame: frame,
+            recentURLs: controller?.availableRecentDocumentURLs() ?? [],
+            inputInsets: editor.textContainerInset
+        )
+        welcome.autoresizingMask = [.width, .height]
+        welcome.alphaValue = 0
+        welcome.isHidden = true
+        welcome.onOpenRecent = { [weak self] url in
+            guard let self,
+                  let controller = NSDocumentController.shared as? DocumentController else { return }
+            controller.openRecentDocument(at: url, from: self)
+        }
+        welcome.onOpenFile = {
+            guard let controller = NSDocumentController.shared as? DocumentController else { return }
+            controller.openDocument(nil)
+        }
+        untitledWelcomeView = welcome
+        editor.textInputDidBegin = { [weak self] in
+            self?.untitledWelcomeView?.setPresented(false, animated: true)
+        }
+        editor.textInputDidEndComposition = { [weak self] in
+            RunLoop.main.perform { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.refreshUntitledWelcomePresentation(animated: true)
+                }
+            }
+        }
+    }
+
+    private func refreshUntitledWelcomePresentation(animated: Bool) {
+        guard let editor, let welcome = untitledWelcomeView else { return }
+        let shouldPresent = UntitledWelcomePresentationPolicy.shouldPresent(
+            hasFileURL: fileURL != nil,
+            rawSource: editor.rawSource,
+            hasMarkedText: editor.hasMarkedText()
+        )
+        welcome.setPresented(shouldPresent, animated: animated)
+    }
+
     /// Keep the editor and floating status strip entirely outside the outline's
     /// frame. Unlike the former overlay layout, this gives AppKit disjoint
     /// cursor regions: the outline owns an arrow and NSTextView owns its I-beam.
@@ -690,7 +758,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
 
     private var currentNavigationWidth: CGFloat {
         navigationSidebar?.isExpanded == true
-            ? DocumentNavigationSidebarView.expandedWidth
+            ? navigationSidebar.preferredExpandedWidth
             : DocumentNavigationSidebarView.collapsedWidth
     }
 
@@ -717,8 +785,10 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             navigationSidebar.animator().frame = layout.navigationSidebarFrame
             outlineFloatingButton.animator().frame = layout.outlineControlFrame
             readView?.animator().frame = layout.readFrame
+            untitledWelcomeView?.animator().frame = layout.editorFrame
             containerView.layoutSubtreeIfNeeded()
         }
+        untitledWelcomeView?.updateInputInsets(editor.textContainerInset)
         minimapView.isHidden = !AppSettings.showMinimap || editor.viewMode == .reading
     }
 
@@ -942,6 +1012,11 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         if !isQuickCapture, !suppressWindowSizePersistence {
             AppSettings.lastWindowSize = window.frame.size
         }
+        let preferredWidth = DocumentNavigationSidebarWidthPolicy.clamp(
+            sidebarSessionState.navigationWidth,
+            containerWidth: containerView?.bounds.width ?? window.contentLayoutRect.width
+        )
+        navigationSidebar?.setPreferredExpandedWidth(preferredWidth)
         updateDocumentLayout(navigationSidebarWidth: currentNavigationWidth,
                              outlineSidebarWidth: currentOutlineWidth,
                              duration: 0)
@@ -1226,6 +1301,11 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
             makeWindowControllers()
         }
         loadPendingWindowContent()
+        // Hidden tab creation deliberately skips showWindows(), which is the
+        // ordinary path that presents the welcome surface. Refresh it here
+        // after pending content is loaded so an empty Command-N tab does not
+        // retain the view's initially hidden state.
+        refreshUntitledWelcomePresentation(animated: false)
         updateStatusBar()
         updateOutline()
     }
@@ -1247,6 +1327,26 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         }
         window.makeKeyAndOrderFront(nil)
         window.toggleFullScreen(sender)
+    }
+
+    /// Shows a newly created untitled document as a real standalone window,
+    /// independent of the user's system-wide automatic-tabbing preference.
+    /// Restore `.automatic` immediately afterward so manual tab operations
+    /// remain available for this ordinary document window.
+    func activateAsStandaloneDocumentWindow() {
+        preventsAutomaticTabbingOnNextShow = true
+        if windowControllers.isEmpty {
+            makeWindowControllers()
+        }
+        windowControllers.first?.window?.tabbingMode = .disallowed
+        showWindows()
+        preventsAutomaticTabbingOnNextShow = false
+
+        guard let window = windowControllers.first?.window else { return }
+        window.tabbingMode = .automatic
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(editor)
     }
 
     func activateAsQuickCapture() {
@@ -1396,6 +1496,264 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         navigationSidebar?.toggleExpanded()
     }
 
+    @objc func commitCurrentFile(_ sender: Any?) {
+        guard !isCommittingCurrentFile,
+              let fileURL,
+              let window = presentationWindow else {
+            if !isCommittingCurrentFile { NSSound.beep() }
+            return
+        }
+        isCommittingCurrentFile = true
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let context = try await gitCurrentFileCommitService.inspect(fileURL: fileURL)
+                let bufferDiffersFromHEAD = !editor.gitChangeSet.lines.isEmpty
+                    || !editor.gitChangeSet.deletionBoundaries.isEmpty
+                let hasUnsavedGitChanges = !contentsOnDiskMatchEditor(at: fileURL)
+                guard context.status != .clean || bufferDiffersFromHEAD else {
+                    throw GitCurrentFileCommitError.noChanges
+                }
+                presentCurrentFileCommitConfirmation(
+                    context: context,
+                    hasUnsavedGitChanges: hasUnsavedGitChanges,
+                    in: window
+                )
+            } catch {
+                isCommittingCurrentFile = false
+                presentCurrentFileCommitFailure(error, in: window)
+            }
+        }
+    }
+
+    private func presentCurrentFileCommitConfirmation(
+        context: GitCurrentFileCommitContext,
+        hasUnsavedGitChanges: Bool,
+        in window: NSWindow
+    ) {
+        let alert = NSAlert()
+        alert.messageText = AppCopy.text("Commit Current File", "提交当前文件")
+        alert.informativeText = AppCopy.text(
+            "FloralMD will save and commit only this Markdown file. Other staged and unstaged files will remain unchanged.",
+            "FloralMD 将先保存文档，然后只提交这个 Markdown 文件；其他文件原有的暂存和未暂存状态不会改变。"
+        )
+        alert.addButton(withTitle: AppCopy.text("Commit", "提交"))
+        alert.addButton(withTitle: AppCopy.text("Cancel", "取消"))
+
+        func valueLabel(_ value: String) -> NSTextField {
+            let field = NSTextField(wrappingLabelWithString: value)
+            field.font = .systemFont(ofSize: 12)
+            field.lineBreakMode = .byTruncatingMiddle
+            return field
+        }
+        func keyLabel(_ value: String) -> NSTextField {
+            let field = NSTextField(labelWithString: value)
+            field.font = .systemFont(ofSize: 12, weight: .semibold)
+            field.textColor = .secondaryLabelColor
+            return field
+        }
+
+        let grid = NSGridView(views: [
+            [keyLabel(AppCopy.text("Repository", "仓库")),
+             valueLabel(context.rootURL.lastPathComponent)],
+            [keyLabel(AppCopy.text("Branch", "分支")), valueLabel(context.branch)],
+            [keyLabel(AppCopy.text("File", "文件")), valueLabel(context.relativePath)],
+            [keyLabel(AppCopy.text("Status", "状态")),
+             valueLabel(currentFileGitStatusDescription(
+                context.status,
+                hasUnsavedGitChanges: hasUnsavedGitChanges
+             ))],
+        ])
+        grid.rowSpacing = 6
+        grid.columnSpacing = 14
+        grid.column(at: 0).xPlacement = .trailing
+        grid.column(at: 1).xPlacement = .fill
+
+        let messageLabel = keyLabel(AppCopy.text("Commit message", "提交信息"))
+        let messageField = NSTextField(string: "document: 更新该文档")
+        messageField.placeholderString = AppCopy.text("Commit message", "提交信息")
+        messageField.setAccessibilityIdentifier("gitCommitMessageField")
+
+        let stack = NSStackView(views: [grid, messageLabel, messageField])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: 440, height: 132)
+        grid.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        messageField.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        alert.accessoryView = stack
+        alert.window.initialFirstResponder = messageField
+
+        alert.beginSheetModal(for: window) { [weak self, weak messageField] response in
+            guard let self else { return }
+            guard response == .alertFirstButtonReturn else {
+                self.isCommittingCurrentFile = false
+                return
+            }
+            let message = messageField?.stringValue ?? ""
+            self.saveDocumentBeforeCurrentFileCommit(
+                fileURL: context.rootURL.appendingPathComponent(context.relativePath),
+                message: message,
+                in: window
+            )
+        }
+        DispatchQueue.main.async { [weak messageField] in
+            messageField?.currentEditor()?.selectedRange = NSRange(
+                location: 0,
+                length: messageField?.stringValue.utf16.count ?? 0
+            )
+        }
+    }
+
+    private func currentFileGitStatusDescription(
+        _ status: GitCurrentFileStatus,
+        hasUnsavedGitChanges: Bool
+    ) -> String {
+        if hasUnsavedGitChanges, status == .clean {
+            return AppCopy.text("Modified in editor; will be saved before commit",
+                                "编辑器中已修改；提交前会先保存")
+        }
+        let savedStatus = switch status {
+        case .clean:
+            AppCopy.text("No saved changes", "没有已保存的变化")
+        case .untracked:
+            AppCopy.text("Untracked new file", "未跟踪的新文件")
+        case .tracked(let index, let workTree):
+            if index != " ", workTree != " " {
+                AppCopy.text(
+                    "Staged + working tree changes; full saved file will be committed",
+                    "同时有暂存和未暂存修改；将提交完整已保存版本"
+                )
+            } else if workTree != " " {
+                AppCopy.text("Modified (\(workTree))", "已修改（\(workTree)）")
+            } else {
+                AppCopy.text("Staged (\(index))", "已暂存（\(index)）")
+            }
+        }
+        guard hasUnsavedGitChanges else { return savedStatus }
+        return AppCopy.text(
+            "\(savedStatus); plus unsaved editor changes",
+            "\(savedStatus)；另有尚未保存的编辑器修改"
+        )
+    }
+
+    private func saveDocumentBeforeCurrentFileCommit(
+        fileURL: URL,
+        message: String,
+        in window: NSWindow
+    ) {
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else {
+            isCommittingCurrentFile = false
+            presentCurrentFileCommitFailure(GitCurrentFileCommitError.emptyMessage, in: window)
+            return
+        }
+
+        prepareForUnsavedDocumentReview()
+        guard !editor.hasMarkedText() else {
+            isCommittingCurrentFile = false
+            presentCurrentFileCommitFailure(
+                NSError(
+                    domain: "FloralMD.GitCurrentFileCommit",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: AppCopy.text(
+                        "Text composition is still active. Finish the composition and try again.",
+                        "文字输入组合仍在进行。请先完成输入，再重试。"
+                    )]
+                ),
+                in: window
+            )
+            return
+        }
+
+        let typeName = fileType ?? "net.daringfireball.markdown"
+        save(to: fileURL, ofType: typeName, for: .saveOperation) { [weak self] error in
+            guard let self else { return }
+            if let error {
+                self.isCommittingCurrentFile = false
+                self.presentCurrentFileCommitFailure(error, in: window, saveFailed: true)
+                return
+            }
+            guard self.contentsOnDiskMatchEditor(at: fileURL) else {
+                self.isCommittingCurrentFile = false
+                self.presentCurrentFileCommitFailure(
+                    NSError(
+                        domain: "FloralMD.GitCurrentFileCommit",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: AppCopy.text(
+                            "The saved file does not match the current document. No commit was created.",
+                            "已保存文件与当前文档不一致，因此没有创建提交。"
+                        )]
+                    ),
+                    in: window,
+                    saveFailed: true
+                )
+                return
+            }
+            self.performCurrentFileCommit(fileURL: fileURL,
+                                          message: trimmedMessage,
+                                          in: window)
+        }
+    }
+
+    private func performCurrentFileCommit(fileURL: URL,
+                                          message: String,
+                                          in window: NSWindow) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await gitCurrentFileCommitService.commit(
+                    fileURL: fileURL,
+                    message: message
+                )
+                isCommittingCurrentFile = false
+                refreshGitChangeMarkers()
+                refreshNavigationSidebar()
+                minimapView?.refresh()
+                NotificationCenter.default.post(
+                    name: DocumentController.documentsDidChange,
+                    object: NSDocumentController.shared
+                )
+                presentCurrentFileCommitSuccess(result, in: window)
+            } catch {
+                isCommittingCurrentFile = false
+                refreshGitChangeMarkers()
+                refreshNavigationSidebar()
+                presentCurrentFileCommitFailure(error, in: window)
+            }
+        }
+    }
+
+    private func presentCurrentFileCommitSuccess(
+        _ result: GitCurrentFileCommitResult,
+        in window: NSWindow
+    ) {
+        let alert = NSAlert()
+        alert.messageText = AppCopy.text("Current File Committed", "当前文件已提交")
+        alert.informativeText = AppCopy.text(
+            "Created local commit \(result.abbreviatedCommit) on \(result.context.branch). Nothing was pushed.",
+            "已在 \(result.context.branch) 创建本地提交 \(result.abbreviatedCommit)，未执行推送。"
+        )
+        alert.addButton(withTitle: AppCopy.text("OK", "好"))
+        alert.beginSheetModal(for: window)
+    }
+
+    private func presentCurrentFileCommitFailure(
+        _ error: Error,
+        in window: NSWindow,
+        saveFailed: Bool = false
+    ) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = saveFailed
+            ? AppCopy.text("Document Could Not Be Saved", "文档无法保存")
+            : AppCopy.text("Current File Was Not Committed", "当前文件未提交")
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: AppCopy.text("OK", "好"))
+        alert.beginSheetModal(for: window)
+    }
+
     /// Scales font size (standard + code) and max content width together by
     /// `factor`, off the persisted base values — never off the currently
     /// applied (possibly already-zoomed) theme, so repeated zooming doesn't
@@ -1417,6 +1775,9 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     }
 
     @objc private func editorDidChange(_ notification: Notification) {
+        // Keep a fallback for non-standard edit paths. Normal typing and marked
+        // text dismiss at the earlier Text Input Client signal.
+        untitledWelcomeView?.setPresented(false, animated: true)
         updateStatusBar()
         updateOutline()
         // Keep an open Read view in sync with edits (it renders a snapshot).
@@ -1430,6 +1791,7 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
         resolvePendingExternalChange()
         reconcileUntitledContentState()
         handleUntitledSaveInputChange()
+        refreshUntitledWelcomePresentation(animated: true)
     }
 
     /// Normalize the editor before either the single-window or application-wide
@@ -1668,6 +2030,8 @@ class Document: NSDocument, HeadingNavigable, OpenDocumentFileMoving {
     override func showWindows() {
         super.showWindows()
         loadPendingWindowContent()
+        untitledWelcomeView?.updateInputInsets(editor.textContainerInset)
+        refreshUntitledWelcomePresentation(animated: true)
         finishHiddenWindowPresentationSetup()
         updateStatusBar()
         updateOutline()

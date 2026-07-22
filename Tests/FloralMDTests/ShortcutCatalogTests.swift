@@ -86,6 +86,7 @@ struct ShortcutCatalogTests {
 
         #expect(commandIDs.contains("app.settings"))
         #expect(commandIDs.contains("file.quickCapture"))
+        #expect(commandIDs.contains("file.openRecent"))
         #expect(commandIDs.contains("view.toggleFullScreen"))
         #expect(commandIDs.contains("window.compact"))
         #expect(commandIDs.contains("format.bold"))
@@ -104,6 +105,19 @@ struct ShortcutCatalogTests {
             ShortcutCatalog.byID["app.commandPalette"]?.defaultShortcut
                 == .application("p", [.command, .shift])
         )
+        #expect(
+            ShortcutCatalog.byID["file.openRecent"]?.defaultShortcut
+                == .application("r", [.control])
+        )
+        #expect(
+            ShortcutCatalog.byID["file.new"]?.defaultShortcut
+                == .application("n", [.command])
+        )
+        #expect(
+            ShortcutCatalog.byID["file.newWindow"]?.defaultShortcut
+                == .application("n", [.command, .shift])
+        )
+        #expect(ShortcutCatalog.byID["file.openInNewWindow"]?.defaultShortcut == nil)
         #expect(ShortcutCatalog.byID["window.compact"]?.defaultShortcut == nil)
     }
 

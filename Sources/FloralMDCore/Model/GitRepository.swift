@@ -490,7 +490,7 @@ public enum GitRepository {
         return GitRepositorySnapshot(rootURL: rootURL, branch: branch, changes: changes)
     }
 
-    private static func runGit(_ arguments: [String], at root: URL) -> String? {
+    static func runGit(_ arguments: [String], at root: URL) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", root.path] + arguments

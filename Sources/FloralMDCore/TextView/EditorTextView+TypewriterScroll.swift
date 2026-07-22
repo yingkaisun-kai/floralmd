@@ -278,11 +278,11 @@ extension EditorTextView {
     /// the scroll anchoring + promotion settle once the region is reached.
     func lineRect(forCharacterAt offset: Int) -> CGRect? {
         let source = textStorage?.string ?? rawSource
-        let length = (source as NSString).length
-        if offset == length, offset > 0, source.hasSuffix("\n"),
+        if Self.isEmptyParagraphInsertionOffset(offset, in: source),
            let previous = lineRect(forCharacterAt: offset - 1) {
-            // The final empty paragraph has no fragment. Advance one effective
-            // line box from the preceding newline so Return can scroll now.
+            // An empty paragraph can have no independent fragment. Advance one
+            // effective line box from the preceding newline so Return can
+            // position and scroll it before its first real glyph arrives.
             // TextKit keeps both user spacing values outside typographicBounds;
             // omitting them makes the caret jump only when the first glyph
             // creates real geometry for this paragraph. Never inherit the
@@ -290,7 +290,14 @@ extension EditorTextView {
             // hundreds of points tall and would center the terminal caret far
             // below the actual empty line.
             let spacing = theme.lineSpacing + theme.paragraphSpacingBefore
-            let lineHeight = ceil(bodyFont.ascender - bodyFont.descender)
+            // Match AppKit's font-leading line box rather than the 19pt short
+            // caret height. Consecutive synthetic paragraphs feed this height
+            // into the next advance; rounding it up accumulates a visible jump.
+            let lineHeight = ("M" as NSString).boundingRect(
+                with: NSSize(width: 10_000, height: 10_000),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: bodyFont]
+            ).height
             return CGRect(x: previous.minX, y: previous.maxY + spacing,
                           width: previous.width, height: lineHeight)
         }

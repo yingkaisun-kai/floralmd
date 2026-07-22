@@ -129,10 +129,17 @@ Markdown 源码
   marked text 尚未提交时，`rawSource` 有意不包含组合串；短光标必须用 TextKit
   存储中的 marked range 与其内部 selection 计算位置，不能把位置截断到
   `rawSource.count`，也不能为了刷新光标而同步或重写存储；
-- 文末光标遇到换行后的空段落时，TextKit 2 可能还没有该行 fragment。
-  此时只从前一行合成一次终端空行几何；行进距离必须额外包含用户的
+- 光标遇到由换行界定的空段落时（包括文档中间与文末），TextKit 2 可能还没有
+  该段自己的 fragment，而把边界位置吸收到上一段 fragment。此时从前一行合成
+  空行几何；行进距离必须额外包含用户的
   `lineSpacing + paragraphSpacingBefore`，否则短光标会在首字符形成真实 fragment
-  时向下跳。打字机模式同时扩展文本视图底部可滚动空间，让 Return 后立即居中；
+  时向下跳。合成空行的自身高度必须匹配 AppKit 的实际字体行框，不能把 spacing
+  塞进高度或向上取整，否则连续空行会累积偏移。显式插入点必须优先使用合成几何；
+  输入法 marked text 仍优先使用其真实 TextKit 2 几何。打字机模式同时
+  扩展文本视图底部可滚动空间，让 Return 后立即居中；
+  文本编辑完成后必须在 `rawSource` 同步与打字机回正之后同步刷新显式插入点，
+  不能只依赖 selection change 安排的下一轮刷新，否则视口已到新空行时短光标仍会
+  短暂画在旧行；
   不得往 Markdown 存储插入占位字符。关闭打字机模式时必须清除这段临时最小高度；
 - `.blockDecoration` 绘制 Callout、引用竖线、表格边框、分隔线、代码背景和列表缩进引导线；
 - `.fragmentOverlay` 在字符位置绘制数学公式、图片、列表符号和复选框；
@@ -163,9 +170,9 @@ Markdown 源码
 - TextKit 2 的系统插入点会包含段落 `lineSpacing`，因此高行距会把光标拉到整行框
   高度，而且实际的 TextKit 2 路径不会调用 `NSTextView.drawInsertionPoint`。编辑器将
   系统插入点设为透明，使用前景 `NSTextInsertionIndicator`，显式管理 first responder、
-  选择范围、字体高度与闪烁计时；不能依赖该视图的 `.automatic` 模式自行激活。文末
-  连续换行产生的终止空段落没有 TextKit 2 fragment，此时从前一空行推导位置并按有效
-  字体缩短，不能退回整行框。
+  选择范围、字体高度与闪烁计时；不能依赖该视图的 `.automatic` 模式自行激活。连续
+  换行产生的空段落可能没有 TextKit 2 fragment，此时从前一空行推导位置并按有效字体
+  缩短，不能退回上一段 fragment 或整行框。
 - 文档以换行符结尾时，TextKit 2 会把最终空行吸收到前一个片段；若前一个片段是
   表格末行，其绘制原点会丢失正常首行缩进。`DecoratedTextLayoutFragment` 只对
   这个末行场景补偿单元格内边距，避免文字、竖线和底线整体左移。
@@ -268,7 +275,24 @@ Edit 模式的链接保留文本编辑语义：普通悬停与点击继续使用
   或新建目录。删除必须使用 `NSWorkspace.recycle` 的可恢复废纸篓语义；已打开文件先
   经过 `NSDocument.canClose` 的未保存审查，回收期间暂停路径监控，只有系统回收成功
   才关闭标签并刷新全部侧栏与 Git 状态，失败时保留标签和内存正文。
-- Git 面板读取工作区状态，但不在应用内执行提交或推送；
+- Git 面板读取工作区状态，并为符合条件的当前 Markdown 文件提供一次性本地提交：
+  `Document` 先通过标准 `NSDocument.save` 路径提交输入法文本、写盘并核对磁盘内容，
+  再由异步 `GitCurrentFileCommitService` 重新检查分支、进行中的 Git 操作和目标文件状态，
+  最终只执行 `git commit --only -- <path>`。未跟踪文件只对目标路径临时执行
+  `git add -N -- <path>`，失败时也只清理该路径，因此其他文件原有的 staged/unstaged
+  状态不进入快照或重写流程。该入口尊重仓库 hooks，不使用 `--no-verify`，只创建本地
+  commit，永不 push；冲突、删除、忽略、无变化、detached HEAD 与
+  merge/rebase/cherry-pick 等不安全状态都会停止；
+- Git 面板的 `History` 保持只读：它在后台调用
+  `/usr/bin/git`，按拓扑顺序读取 `HEAD` 与本地分支可达的最近 80 个提交。
+  `GitHistorySnapshot` 保存提交、引用和 HEAD 元数据，`GitGraphLayout` 在 Swift
+  模型层分配分支与合并 lane，跨 lane 连接由 `GitGraphGeometry` 生成保持两端纵向
+  切线的三次贝塞尔曲线；AppKit 行视图只负责绘制和选择。当前提交在未选中时也显示
+  独立 `HEAD` 标签，分支名与提交信息按可用宽度截断。提交弹窗仅显示作者、时间、
+  完整哈希、父提交和本地分支，并可复制哈希，不执行 diff、checkout、提交或推送；
+- 文件/Git 侧栏默认宽度为 248pt，可从右侧分隔边缘拖动到 220–420pt，并同时受窗口
+  宽度 45% 上限约束。`DocumentSidebarSessionState` 保存当前标签会话的展开宽度、主模式
+  与 Git 子模式，因此折叠、模式切换、窗口 resize 和原生标签切换不会重置用户布局；
 - 图片仍是普通 Markdown 引用与磁盘文件，不进入编辑器存储。格式菜单可选择现有
   图片并按设置写入绝对或相对路径；粘贴图片只拦截可转为 PNG 的剪贴板内容，弹出
   带可编辑时间前缀的命名框，将文件保存到当前 Markdown 同目录下配置的相对文件夹
@@ -285,6 +309,26 @@ Edit 模式的链接保留文本编辑语义：普通悬停与点击继续使用
   只布局目标片段并有限次收敛正文落点，不按 `document.bounds.height` 比例滚动，
   也不枚举或信任全部离屏 fragment 的估算 y 坐标；
 - 原生 `NSDocument` 窗口标签负责多文档切换；
+- `⌘N` 通过隐藏创建未命名文档、显式加入当前普通文档标签组后再显示，不能依赖
+  macOS 的“打开文稿时首选标签页”设置；没有普通文档窗口时才创建首个独立窗口。
+  这条 `display: false` 路径不会调用 `showWindows()`，因此加载 pending content 后
+  必须显式刷新未命名空白欢迎层，不能保留视图初始化时的隐藏状态；
+  `⌘⇧N` 明确新建独立窗口：首次显示期间临时禁用自动并组，显示完成后立即恢复普通
+  标签能力。快速记录继续永久禁止自动并入普通文档标签组；
+- `⌘O` 默认把新文件加入触发命令时所在文档的原生标签组，文件目录或 Git 仓库不参与
+  窗口分组；若当时没有可用文档窗口则创建独立窗口。文件菜单另提供无默认快捷键的
+  “在新窗口中打开…”；已打开文件只激活其现有窗口或标签，不跨标签组搬移。Finder、
+  命令行与启动文件请求继续遵循标准 `NSDocument` 打开流程；
+- 普通本地文件成功打开后由 `RecentDocumentHistory` 写回
+  `NSDocumentController` 的系统最近文档列表；`DocumentController` 明确声明与生产
+  shared file list 一致的五项上限，避免不声明文档类型的隔离 Debug 身份得到默认零值。
+  适配层只在 AppKit 尚未反映异步写入时保留进程内的待提交快照，系统列表一旦追平即
+  回到直接读取系统值。菜单展开时按该系统列表上限实时去重，并
+  移除已删除、移动或不可读的 URL。最近项与 `⌘O` 共用当前标签组语义，“清除菜单”
+  直接清空同一系统列表。聚焦文本视图会先消费 `Control-R`，因此应用级本地按键
+  monitor 只拦截这个精确 chord，并打开居中的最近文件选择器；选择器显示文件名与
+  父目录路径，且与命令面板中的“最近打开”命令共用同一入口。文件菜单仍保留原生
+  最近项目子菜单；
 - 原生标签栏出现或消失时，AppKit 可能只改变 `contentView` 高度而不发送
   `NSWindow.didResize`。正文表面中以 frame 定位的顶部悬浮控件必须使用顶部锚定的
   autoresizing 或约束；否则新文件并入标签组后会保留旧 Y 坐标并被标签栏裁切。
@@ -292,7 +336,22 @@ Edit 模式的链接保留文本编辑语义：普通悬停与点击继续使用
   document-based reopen 流程创建至多一个未命名文档；
   `applicationShouldHandleReopen` 不得在返回 `true` 的同时手动调用
   `newDocument`，否则一次用户意图会有两个创建所有者。启动时打开已有文件、
-  Finder 打开文件和窗口恢复也必须先于默认未命名创建，不能附带空白窗口；
+  Finder 打开文件和窗口恢复也必须先于默认未命名创建，不能附带空白窗口。命令行
+  文件请求只识别位置参数；`-ApplePersistenceIgnoreState YES`、诊断参数和其他
+  UserDefaults 键值对不属于文件路径，不能误抑制默认未命名窗口；
+- 欢迎提示是语义为空的未保存未命名文档上的轻量窗口层，不是 Markdown 内容或独立
+  首页。冷启动、`Cmd-N` 与快速记录共用同一动态状态：`fileURL == nil`、没有 marked
+  text，且 `UntitledDocumentContentPolicy` 判定正文为空时显示；输入或 IME 组合一开始
+  立即隐藏，删除回语义空白或取消组合后重新显示；一旦取得 `fileURL`，即使正文为空也
+  永不显示。它复用 `DocumentController` 的系统最近文件来源与当前标签组打开语义；
+  实际输入提示贴近编辑器插入点，居中的 `FloralMD` 水印与文件导航不伪装成输入框。
+  为保持编辑器第一响应者，透明欢迎视图位于编辑器前方但只让最近文件与“打开文件”
+  控件参与命中，其他区域返回 `nil` 透传。欢迎层及其控件不注册 cursor rect，编辑器
+  因而在整个表面独占连续的 I-beam；可点击性由整行即时增强背景、文字和图标来表达，
+  避免前后视图争夺 cursor rect 而闪烁。`EditorTextView.textInputDidBegin` 只负责
+  展示层的提前隐藏，
+  AppKit 仍原样处理首个按键与 marked text；组合结束后的状态刷新只读取
+  `rawSource` / `hasMarkedText()`，不触碰 storage；
 - 每个新建、重新打开或由系统恢复创建的文档窗口，其窗口会话初始都收起左右
   侧栏；这不是 `UserDefaults` 设置，也不在后续刷新中重复应用，用户展开后会在
   该窗口会话内保持展开。快速记录继续复用同一初始状态并保留其紧凑窗口策略。

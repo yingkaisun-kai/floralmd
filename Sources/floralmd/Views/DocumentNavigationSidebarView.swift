@@ -23,16 +23,114 @@ private final class DocumentNavigationTableView: NSTableView {
     }
 }
 
-/// Left-side repository file tree and read-only Git status.
+private final class DocumentNavigationResizeHandle: NSView {
+    var currentWidth: (() -> CGFloat)?
+    var onResize: ((CGFloat) -> Void)?
+    var onReset: (() -> Void)?
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            onReset?()
+            return
+        }
+        guard let window, let initialWidth = currentWidth?() else { return }
+        let initialX = event.locationInWindow.x
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp { break }
+            onResize?(initialWidth + next.locationInWindow.x - initialX)
+        }
+    }
+}
+
+private final class GitModeScopeBar: NSView {
+    var onChange: ((DocumentGitMode) -> Void)?
+    private let changesButton = NSButton()
+    private let historyButton = NSButton()
+    private let indicator = NSView()
+    private var indicatorCenterConstraint: NSLayoutConstraint?
+
+    var selectedMode: DocumentGitMode = .changes {
+        didSet { updateSelection() }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        let stack = NSStackView(views: [changesButton, historyButton])
+        stack.orientation = .horizontal
+        stack.spacing = 18
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for (button, action) in [(changesButton, #selector(selectChanges(_:))),
+                                 (historyButton, #selector(selectHistory(_:)))] {
+            button.isBordered = false
+            button.bezelStyle = .inline
+            button.font = .systemFont(ofSize: 11, weight: .medium)
+            button.target = self
+            button.action = action
+            button.setButtonType(.momentaryChange)
+        }
+        indicator.wantsLayer = true
+        indicator.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        indicator.layer?.cornerRadius = 1
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        addSubview(indicator)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.heightAnchor.constraint(equalToConstant: 19),
+            indicator.bottomAnchor.constraint(equalTo: bottomAnchor),
+            indicator.widthAnchor.constraint(equalToConstant: 24),
+            indicator.heightAnchor.constraint(equalToConstant: 2),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        refreshLanguage()
+        updateSelection()
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func refreshLanguage() {
+        changesButton.title = AppCopy.text("Changes", "改动")
+        historyButton.title = AppCopy.text("History", "历史")
+        setAccessibilityLabel(AppCopy.text("Git views", "Git 视图"))
+        changesButton.setAccessibilityLabel(changesButton.title)
+        historyButton.setAccessibilityLabel(historyButton.title)
+    }
+
+    private func updateSelection() {
+        let selected = selectedMode == .changes ? changesButton : historyButton
+        changesButton.contentTintColor = selectedMode == .changes
+            ? .controlAccentColor : .secondaryLabelColor
+        historyButton.contentTintColor = selectedMode == .history
+            ? .controlAccentColor : .secondaryLabelColor
+        indicatorCenterConstraint?.isActive = false
+        indicatorCenterConstraint = indicator.centerXAnchor.constraint(equalTo: selected.centerXAnchor)
+        indicatorCenterConstraint?.isActive = true
+    }
+
+    @objc private func selectChanges(_ sender: Any?) {
+        selectedMode = .changes
+        onChange?(.changes)
+    }
+
+    @objc private func selectHistory(_ sender: Any?) {
+        selectedMode = .history
+        onChange?(.history)
+    }
+}
+
+/// Left-side repository file tree, Git status, local history, and current-file commit action.
 /// Open documents are intentionally left to macOS's native window tabs.
 final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
     NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
 
-    static let expandedWidth: CGFloat = 248
+    static let expandedWidth = DocumentNavigationSidebarWidthPolicy.defaultWidth
     static let collapsedWidth: CGFloat = 0
-    private static let modeControlWidth: CGFloat = expandedWidth - 28
-
-    private enum Mode { case files, git }
     private struct FileTreeRow {
         let entry: MarkdownDirectoryEntry
         let depth: Int
@@ -60,8 +158,11 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
     }
 
     private let modeControl = NSSegmentedControl()
+    private let gitModeScopeBar = GitModeScopeBar()
     private let locationLabel = NSTextField(labelWithString: "")
+    private let commitCurrentFileButton = NSButton()
     private let separator = QuietSidebarSeparatorView()
+    private let resizeHandle = DocumentNavigationResizeHandle()
     private let scrollView = NSScrollView()
     private let tableView = DocumentNavigationTableView()
     private var fileRows: [FileTreeRow] = []
@@ -71,10 +172,24 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
     private var gitSnapshot: GitRepositorySnapshot?
     private var displayedGitSnapshot: GitRepositorySnapshot?
     private var currentBufferDiffersFromHEAD: Bool?
-    private var mode: Mode = .files
+    private var mode: DocumentNavigationMode
+    private var gitMode: DocumentGitMode
+    private var historySnapshot: GitHistorySnapshot?
+    private var historyRows: [GitGraphRow] = []
+    private var historyTask: Task<Void, Never>?
+    private var isLoadingHistory = false
+    private var historyLoadFailed = false
+    private var commitPopover: NSPopover?
+    private var locationBelowModeConstraint: NSLayoutConstraint!
+    private var locationBelowGitModeConstraint: NSLayoutConstraint!
+    private var modeControlWidthConstraint: NSLayoutConstraint!
+    private var gitModeWidthConstraint: NSLayoutConstraint!
+    private(set) var preferredExpandedWidth: CGFloat
     private var renameSession: RenameSession?
     private var renameKeyMonitor: RenameKeyMonitorToken?
     private var pendingOpenURL: URL?
+    private var scrollBottomConstraint: NSLayoutConstraint!
+    private var scrollBottomToCommitConstraint: NSLayoutConstraint!
     private(set) var isExpanded = true
 
     var onOpenFile: ((URL) -> Void)?
@@ -82,9 +197,17 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
                         @escaping @MainActor (Result<URL, Error>) -> Void) -> Void)?
     var canMoveFileToTrash: ((URL) -> Bool)?
     var onMoveFileToTrash: ((URL) -> Void)?
+    var onCommitCurrentFile: (() -> Void)?
     var onWidthChange: ((CGFloat, TimeInterval) -> Void)?
+    var onModeChange: ((DocumentNavigationMode, DocumentGitMode) -> Void)?
 
-    init(frame frameRect: NSRect) {
+    init(frame frameRect: NSRect,
+         mode: DocumentNavigationMode = .files,
+         gitMode: DocumentGitMode = .changes) {
+        self.mode = mode
+        self.gitMode = gitMode
+        preferredExpandedWidth = max(frameRect.width,
+                                     DocumentNavigationSidebarWidthPolicy.minimumWidth)
         super.init(role: .files)
         frame = frameRect
         autoresizingMask = [.height]
@@ -92,16 +215,29 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
         modeControl.segmentCount = 2
         modeControl.segmentStyle = .capsule
         modeControl.trackingMode = .selectOne
-        modeControl.selectedSegment = 0
+        modeControl.selectedSegment = mode.rawValue
         modeControl.target = self
         modeControl.action = #selector(changeMode(_:))
         modeControl.translatesAutoresizingMaskIntoConstraints = false
+
+        gitModeScopeBar.selectedMode = gitMode
+        gitModeScopeBar.isHidden = mode != .git
+        gitModeScopeBar.onChange = { [weak self] mode in self?.changeGitMode(to: mode) }
+        gitModeScopeBar.translatesAutoresizingMaskIntoConstraints = false
 
         locationLabel.font = .systemFont(ofSize: 11, weight: .medium)
         locationLabel.textColor = .secondaryLabelColor
         locationLabel.lineBreakMode = .byTruncatingMiddle
         locationLabel.maximumNumberOfLines = 1
         locationLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        commitCurrentFileButton.bezelStyle = .rounded
+        commitCurrentFileButton.controlSize = .small
+        commitCurrentFileButton.target = self
+        commitCurrentFileButton.action = #selector(commitCurrentFile(_:))
+        commitCurrentFileButton.translatesAutoresizingMaskIntoConstraints = false
+        commitCurrentFileButton.isHidden = true
+        commitCurrentFileButton.setAccessibilityIdentifier("gitCommitCurrentFileButton")
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("navigation"))
         column.resizingMask = .autoresizingMask
@@ -130,55 +266,113 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         separator.translatesAutoresizingMaskIntoConstraints = false
+        resizeHandle.translatesAutoresizingMaskIntoConstraints = false
         addSubview(separator)
         addSubview(modeControl)
+        addSubview(gitModeScopeBar)
         addSubview(locationLabel)
         addSubview(scrollView)
+        addSubview(commitCurrentFileButton)
+        addSubview(resizeHandle)
+        scrollBottomConstraint = scrollView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        scrollBottomToCommitConstraint = scrollView.bottomAnchor.constraint(
+            equalTo: commitCurrentFileButton.topAnchor,
+            constant: -8
+        )
+        modeControlWidthConstraint = modeControl.widthAnchor.constraint(
+            equalToConstant: preferredExpandedWidth - 28
+        )
+        gitModeWidthConstraint = gitModeScopeBar.widthAnchor.constraint(
+            equalToConstant: preferredExpandedWidth - 40
+        )
+        locationBelowModeConstraint = locationLabel.topAnchor.constraint(
+            equalTo: modeControl.bottomAnchor, constant: 10
+        )
+        locationBelowGitModeConstraint = locationLabel.topAnchor.constraint(
+            equalTo: gitModeScopeBar.bottomAnchor, constant: 7
+        )
         NSLayoutConstraint.activate([
             separator.trailingAnchor.constraint(equalTo: trailingAnchor),
             separator.topAnchor.constraint(equalTo: topAnchor),
             separator.bottomAnchor.constraint(equalTo: bottomAnchor),
             separator.widthAnchor.constraint(equalToConstant: 1),
+            resizeHandle.trailingAnchor.constraint(equalTo: trailingAnchor),
+            resizeHandle.topAnchor.constraint(equalTo: topAnchor),
+            resizeHandle.bottomAnchor.constraint(equalTo: bottomAnchor),
+            resizeHandle.widthAnchor.constraint(equalToConstant: 7),
             modeControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             // Keep the segmented control at its expanded width while the sidebar
             // collapses. Compressing NSSegmentedControl to zero makes its segment
             // widths stick in a corrupted arrangement after the sidebar reopens.
-            modeControl.widthAnchor.constraint(equalToConstant: Self.modeControlWidth),
+            modeControlWidthConstraint,
             modeControl.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             modeControl.heightAnchor.constraint(equalToConstant: 28),
+            gitModeScopeBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            gitModeWidthConstraint,
+            gitModeScopeBar.topAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: 6),
+            gitModeScopeBar.heightAnchor.constraint(equalToConstant: 22),
             locationLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             locationLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            locationLabel.topAnchor.constraint(equalTo: modeControl.bottomAnchor, constant: 10),
+            locationBelowModeConstraint,
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: locationLabel.bottomAnchor, constant: 8),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scrollBottomConstraint,
+            commitCurrentFileButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            commitCurrentFileButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            commitCurrentFileButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            commitCurrentFileButton.heightAnchor.constraint(equalToConstant: 28),
         ])
+        resizeHandle.currentWidth = { [weak self] in self?.preferredExpandedWidth ?? 0 }
+        resizeHandle.onResize = { [weak self] width in self?.resize(to: width) }
+        resizeHandle.onReset = { [weak self] in self?.resize(to: Self.expandedWidth) }
         NotificationCenter.default.addObserver(self, selector: #selector(refreshLanguage),
                                                name: .appLanguageDidChange, object: nil)
+        updateGitModeControlVisibility()
         refreshLanguage()
     }
 
     required init?(coder: NSCoder) { nil }
 
-    deinit { NotificationCenter.default.removeObserver(self) }
+    deinit {
+        historyTask?.cancel()
+        NotificationCenter.default.removeObserver(self)
+    }
 
     func toggleExpanded() {
         setExpanded(!isExpanded, animated: true)
+    }
+
+    func setPreferredExpandedWidth(_ width: CGFloat, notify: Bool = false) {
+        let availableWidth = superview?.bounds.width ?? width / 0.45
+        let clamped = DocumentNavigationSidebarWidthPolicy.clamp(
+            width, containerWidth: availableWidth
+        )
+        preferredExpandedWidth = clamped
+        modeControlWidthConstraint.constant = clamped - 28
+        gitModeWidthConstraint.constant = clamped - 40
+        if notify, isExpanded { onWidthChange?(clamped, 0) }
+    }
+
+    private func resize(to width: CGFloat) {
+        setPreferredExpandedWidth(width, notify: true)
     }
 
     func setExpanded(_ expanded: Bool, animated: Bool) {
         guard let superview else { return }
         guard isExpanded != expanded else { return }
         isExpanded = expanded
+        if !expanded { commitCurrentFileButton.isHidden = true }
 
-        let contentViews = [modeControl, locationLabel, scrollView]
+        let contentViews: [NSView] = [modeControl, gitModeScopeBar, locationLabel,
+                                      scrollView, resizeHandle]
         if isExpanded {
             isHidden = false
             contentViews.forEach {
                 $0.isHidden = false
                 $0.alphaValue = 0
             }
+            gitModeScopeBar.isHidden = mode != .git
         } else {
             // Its frame deliberately stays at the expanded width; hide it before
             // the parent narrows so it cannot draw over the editor during transit.
@@ -186,7 +380,7 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
             modeControl.alphaValue = 1
         }
 
-        let targetWidth = isExpanded ? Self.expandedWidth : Self.collapsedWidth
+        let targetWidth = isExpanded ? preferredExpandedWidth : Self.collapsedWidth
         let duration = animated ? 0.22 : 0
         onWidthChange?(targetWidth, duration)
 
@@ -195,8 +389,10 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
                 $0.isHidden = !isExpanded
                 $0.alphaValue = 1
             }
+            if isExpanded { gitModeScopeBar.isHidden = mode != .git }
             isHidden = !isExpanded
             superview.layoutSubtreeIfNeeded()
+            refreshCommitAction()
             return
         }
 
@@ -218,6 +414,7 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
                 self.isHidden = true
             }
         }
+        if isExpanded { refreshCommitAction() }
     }
 
     func refresh(currentFileURL: URL?) {
@@ -236,8 +433,13 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
         }
         expandPathToCurrentFile()
         rebuildFileRows()
+        if mode == .git, gitMode == .history,
+           historySnapshot?.rootURL.standardizedFileURL != newRoot {
+            loadHistory()
+        }
         tableView.reloadData()
         selectCurrentRow()
+        refreshCommitAction()
     }
 
     /// Applies the editor's in-memory state to the last repository snapshot.
@@ -248,6 +450,7 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
         rebuildDisplayedGitSnapshot()
         updateLocationLabel()
         tableView.reloadData()
+        refreshCommitAction()
     }
 
     private func rebuildDisplayedGitSnapshot() {
@@ -303,6 +506,23 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
                 ?? AppCopy.text("No folder", "无文件夹")
             locationLabel.toolTip = fileRootURL?.path
         case .git:
+            if gitMode == .history {
+                if isLoadingHistory {
+                    locationLabel.stringValue = AppCopy.text("Loading history…", "正在载入历史…")
+                    locationLabel.toolTip = nil
+                } else if historyLoadFailed {
+                    locationLabel.stringValue = AppCopy.text("History unavailable", "无法载入历史")
+                    locationLabel.toolTip = currentFileURL?.path
+                } else if let historySnapshot {
+                    let branch = historySnapshot.currentBranch ?? AppCopy.text("Detached HEAD", "分离的 HEAD")
+                    locationLabel.stringValue = "\(branch) · \(historySnapshot.commits.count)"
+                    locationLabel.toolTip = historySnapshot.rootURL.path
+                } else {
+                    locationLabel.stringValue = AppCopy.text("No Git repository", "未找到 Git 仓库")
+                    locationLabel.toolTip = nil
+                }
+                return
+            }
             guard let gitSnapshot = displayedGitSnapshot else {
                 locationLabel.stringValue = AppCopy.text("No Git repository", "未找到 Git 仓库")
                 locationLabel.toolTip = nil
@@ -314,10 +534,41 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
         }
     }
 
+    private func refreshCommitAction() {
+        let available = mode == .git && currentFileChangeIsCommittable
+        commitCurrentFileButton.isHidden = !available || !isExpanded
+        scrollBottomConstraint.isActive = !available
+        scrollBottomToCommitConstraint.isActive = available
+    }
+
+    private var currentFileChangeIsCommittable: Bool {
+        guard let currentFileURL,
+              MarkdownDirectory.isMarkdown(currentFileURL),
+              let snapshot = displayedGitSnapshot else { return false }
+        let rootPath = snapshot.rootURL.standardizedFileURL.path
+        let filePath = currentFileURL.standardizedFileURL.path
+        guard filePath.hasPrefix(rootPath + "/") else { return false }
+        let relativePath = String(filePath.dropFirst(rootPath.count + 1))
+        guard let change = snapshot.changes.first(where: { $0.path == relativePath }) else {
+            return false
+        }
+        return !change.isIgnored
+            && change.pathState != .conflicted
+            && change.indexStatus != "D"
+            && change.workTreeStatus != "D"
+            && change.indexStatus != "R"
+            && change.workTreeStatus != "R"
+            && change.indexStatus != "C"
+            && change.workTreeStatus != "C"
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int {
         switch mode {
         case .files: fileRows.count
-        case .git: displayedGitSnapshot?.changes.count ?? 0
+        case .git:
+            gitMode == .changes
+                ? displayedGitSnapshot?.changes.count ?? 0
+                : historySnapshot?.commits.count ?? 0
         }
     }
 
@@ -390,6 +641,25 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
                                                 ? AppCopy.text("Folder", "文件夹")
                                                 : AppCopy.text("Markdown document", "Markdown 文档"))
         case .git:
+            if gitMode == .history {
+                guard let snapshot = historySnapshot,
+                      snapshot.commits.indices.contains(row),
+                      historyRows.indices.contains(row) else { return nil }
+                let id = NSUserInterfaceItemIdentifier("GitHistoryCell")
+                let cell = (tableView.makeView(withIdentifier: id, owner: self)
+                            as? GitHistoryCellView) ?? {
+                    let cell = GitHistoryCellView()
+                    cell.identifier = id
+                    return cell
+                }()
+                let commit = snapshot.commits[row]
+                cell.configure(
+                    commit: commit,
+                    row: historyRows[row],
+                    isHEAD: commit.id == snapshot.headID
+                )
+                return cell
+            }
             guard let change = displayedGitSnapshot?.changes[row] else { return cell }
             cell.imageLeadingConstraint?.constant = 7
             cell.detailTextField?.isHidden = true
@@ -440,19 +710,83 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
     @objc private func refreshLanguage() {
         modeControl.setLabel(AppCopy.text("Files", "文件"), forSegment: 0)
         modeControl.setLabel("Git", forSegment: 1)
+        commitCurrentFileButton.title = AppCopy.text(
+            "Commit Current File…",
+            "提交当前文件…"
+        )
+        commitCurrentFileButton.toolTip = AppCopy.text(
+            "Save and commit only the current Markdown file",
+            "保存并只提交当前 Markdown 文件"
+        )
+        modeControl.setAccessibilityLabel(AppCopy.text("Sidebar mode", "侧栏模式"))
+        gitModeScopeBar.refreshLanguage()
         updateLocationLabel()
         if renameSession == nil { tableView.reloadData() }
     }
 
     @objc private func changeMode(_ sender: NSSegmentedControl) {
         mode = sender.selectedSegment == 1 ? .git : .files
+        updateGitModeControlVisibility()
         if mode == .git, let currentFileURL {
             gitSnapshot = GitRepository.snapshot(containing: currentFileURL)
             rebuildDisplayedGitSnapshot()
+            if gitMode == .history { loadHistory() }
         }
         updateLocationLabel()
         tableView.reloadData()
         selectCurrentRow()
+        refreshCommitAction()
+        onModeChange?(mode, gitMode)
+    }
+
+    @objc private func commitCurrentFile(_ sender: Any?) {
+        onCommitCurrentFile?()
+    }
+
+    private func changeGitMode(to newMode: DocumentGitMode) {
+        gitMode = newMode
+        commitPopover?.close()
+        if gitMode == .history { loadHistory() }
+        updateLocationLabel()
+        tableView.reloadData()
+        selectCurrentRow()
+        onModeChange?(mode, gitMode)
+    }
+
+    private func updateGitModeControlVisibility() {
+        let showsGitModes = mode == .git
+        gitModeScopeBar.isHidden = !showsGitModes
+        locationBelowModeConstraint.isActive = !showsGitModes
+        locationBelowGitModeConstraint.isActive = showsGitModes
+    }
+
+    private func loadHistory() {
+        historyTask?.cancel()
+        guard let currentFileURL else {
+            historySnapshot = nil
+            historyRows = []
+            isLoadingHistory = false
+            historyLoadFailed = false
+            updateLocationLabel()
+            tableView.reloadData()
+            return
+        }
+        isLoadingHistory = true
+        historyLoadFailed = false
+        updateLocationLabel()
+        tableView.reloadData()
+        historyTask = Task { [weak self] in
+            let snapshot = await Task.detached(priority: .userInitiated) {
+                GitRepository.history(containing: currentFileURL)
+            }.value
+            guard let self, !Task.isCancelled else { return }
+            self.historySnapshot = snapshot
+            self.historyRows = snapshot.map { GitGraphLayout.rows(for: $0.commits) } ?? []
+            self.isLoadingHistory = false
+            self.historyLoadFailed = snapshot == nil
+            self.updateLocationLabel()
+            self.tableView.reloadData()
+        }
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
@@ -502,11 +836,41 @@ final class DocumentNavigationSidebarView: QuietSidebarBackgroundView,
                 }
             }
         case .git:
+            if gitMode == .history {
+                if commitPopover?.isShown != true { showCommitDetails(at: row) }
+                return
+            }
             guard let snapshot = displayedGitSnapshot,
                   snapshot.changes.indices.contains(row) else { return }
             let url = snapshot.rootURL.appendingPathComponent(snapshot.changes[row].path)
             if MarkdownDirectory.isMarkdown(url) { onOpenFile?(url) }
         }
+    }
+
+    private func showCommitDetails(at row: Int) {
+        guard let snapshot = historySnapshot,
+              snapshot.commits.indices.contains(row) else { return }
+        let commit = snapshot.commits[row]
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = GitCommitDetailViewController(
+            commit: commit,
+            isHEAD: commit.id == snapshot.headID
+        )
+        commitPopover?.close()
+        commitPopover = popover
+        let rowRect = tableView.rect(ofRow: row)
+        popover.show(relativeTo: rowRect, of: tableView, preferredEdge: .maxX)
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        mode == .git && gitMode == .history ? 45 : 30
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard mode == .git, gitMode == .history,
+              tableView.selectedRow >= 0 else { return }
+        showCommitDetails(at: tableView.selectedRow)
     }
 
     @objc private func beginRenameFromDoubleClick(_ sender: Any?) {

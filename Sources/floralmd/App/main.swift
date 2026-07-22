@@ -13,14 +13,17 @@ import Sparkle
 // --- App Delegate -----------------------------------------------------------
 
 @MainActor
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
 
     var aboutWindowController: AboutWindowController?
     var settingsWindowController: SettingsWindowController?
     private var commandPaletteController: CommandPaletteController?
+    private var recentDocumentsController: RecentDocumentsController?
     private let memoryWatchdog = MemoryWatchdog()
     private let globalHotKeyController = GlobalHotKeyController()
     private var lastGlobalHotKeyError: OSStatus?
+    private var recentOpenKeyMonitor: Any?
+    private weak var recentDocumentsMenu: NSMenu?
     #if FLORALMD_PRODUCTION
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
@@ -37,6 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         Log.info("\(AppIdentity.displayName) launched", category: .app)
         AppSettings.applyAppearance()
         setupMenuBar()
+        installRecentOpenKeyMonitor()
         NotificationCenter.default.addObserver(self, selector: #selector(appLanguageChanged),
                                                name: .appLanguageDidChange, object: nil)
         NotificationCenter.default.addObserver(
@@ -75,9 +79,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Open file from command-line argument. When a file is given,
         // `applicationShouldOpenUntitledFile` suppresses the otherwise-automatic
         // blank document, so we don't end up with two windows.
-        let args = CommandLine.arguments
-        if args.count > 1 {
-            let url = URL(fileURLWithPath: args[1])
+        if let documentPath = ApplicationLifecyclePolicy.explicitDocumentPath(
+            in: CommandLine.arguments
+        ) {
+            let url = URL(fileURLWithPath: documentPath)
             Log.info("Opening file from launch argument: \(url.path)", category: .document)
             NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, _ in }
         }
@@ -88,6 +93,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let recentOpenKeyMonitor {
+            NSEvent.removeMonitor(recentOpenKeyMonitor)
+        }
         memoryWatchdog.stop()
     }
 
@@ -95,7 +103,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // command line (otherwise the file arg + the blank doc make two windows).
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
         ApplicationLifecyclePolicy.shouldOpenUntitledFileAtLaunch(
-            hasExplicitFileRequest: CommandLine.arguments.count > 1,
+            hasExplicitFileRequest: ApplicationLifecyclePolicy.explicitDocumentPath(
+                in: CommandLine.arguments
+            ) != nil,
             startupCreatesNewDocument: AppSettings.startupAction == .createNewDocument
         )
     }
@@ -319,20 +329,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Manual Open panel — bypasses NSDocumentController's type validation
     /// which is broken without Info.plist.
     @MainActor @objc func openDocumentManually(_ sender: Any?) {
+        presentOpenPanel(requestsNewWindow: false)
+    }
+
+    @MainActor @objc func openDocumentInNewWindowManually(_ sender: Any?) {
+        presentOpenPanel(requestsNewWindow: true)
+    }
+
+    @MainActor private func presentOpenPanel(requestsNewWindow: Bool) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
+        // Capture the source before the panel becomes key. If the source closes
+        // while the panel is open, DocumentController safely falls back to a
+        // standalone window after the user chooses a file.
+        let sourceDocument = requestsNewWindow ? nil : activeDocument
 
         let complete: (NSApplication.ModalResponse) -> Void = { response in
             guard response == .OK, let url = panel.url else { return }
-            NSDocumentController.shared.openDocument(
-                withContentsOf: url, display: true
-            ) { _, _, error in
-                if let error = error {
-                    NSAlert(error: error).runModal()
-                }
-            }
+            guard let controller = NSDocumentController.shared as? DocumentController else { return }
+            controller.openDocument(
+                at: url,
+                from: sourceDocument,
+                requestsNewWindow: requestsNewWindow
+            )
         }
 
         // Attach the panel to the front window as a sheet so it's always visible
@@ -344,6 +365,87 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         } else {
             panel.begin(completionHandler: complete)
         }
+    }
+
+    @MainActor @objc private func openRecentDocument(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL,
+              let controller = NSDocumentController.shared as? DocumentController else { return }
+        controller.openRecentDocument(at: url, from: activeDocument)
+    }
+
+    @MainActor @objc private func clearRecentDocuments(_ sender: Any?) {
+        guard let controller = NSDocumentController.shared as? DocumentController else { return }
+        controller.clearRecentDocumentHistory()
+        rebuildRecentDocumentsMenu()
+    }
+
+    /// An editor can consume Control-R as a text-system command before the menu
+    /// sees it. The application-local event monitor routes that exact chord to
+    /// the same centered chooser exposed through the command palette.
+    @MainActor @objc func showRecentDocuments(_ sender: Any?) {
+        guard let controller = NSDocumentController.shared as? DocumentController else {
+            NSSound.beep()
+            return
+        }
+        let urls = controller.availableRecentDocumentURLs()
+        guard !urls.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        if recentDocumentsController == nil {
+            recentDocumentsController = RecentDocumentsController()
+        }
+        recentDocumentsController?.show(urls: urls, from: activeDocument)
+    }
+
+    @MainActor private func installRecentOpenKeyMonitor() {
+        recentOpenKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard modifiers == .control,
+                  event.charactersIgnoringModifiers?.lowercased() == "r" else {
+                return event
+            }
+            MainActor.assumeIsolated {
+                self?.showRecentDocuments(nil)
+            }
+            return nil
+        }
+    }
+
+    @MainActor func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === recentDocumentsMenu else { return }
+        rebuildRecentDocumentsMenu()
+    }
+
+    @MainActor private func rebuildRecentDocumentsMenu() {
+        guard let menu = recentDocumentsMenu,
+              let controller = NSDocumentController.shared as? DocumentController else { return }
+        let urls = controller.availableRecentDocumentURLs()
+
+        menu.removeAllItems()
+        for url in urls {
+            let item = NSMenuItem(
+                title: url.lastPathComponent,
+                action: #selector(openRecentDocument(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = url
+            item.toolTip = url.path
+            menu.addItem(item)
+        }
+        if !urls.isEmpty {
+            menu.addItem(.separator())
+        }
+
+        let clear = menu.addItem(
+            withTitle: AppCopy.text("Clear Menu", "清除菜单"),
+            action: #selector(clearRecentDocuments(_:)),
+            keyEquivalent: ""
+        )
+        clear.target = self
+        clear.isEnabled = !urls.isEmpty
     }
 
     // MARK: - Menu Bar
@@ -412,10 +514,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let fileMenuItem = NSMenuItem()
         let fileMenu = NSMenu(title: AppCopy.text("File", "文件"))
 
-        let newDocument = fileMenu.addItem(withTitle: AppCopy.text("New", "新建"),
-                                           action: #selector(NSDocumentController.newDocument(_:)),
-                                           keyEquivalent: "")
-        ShortcutManager.configure(newDocument, commandID: "file.new")
+        let newTab = fileMenu.addItem(withTitle: AppCopy.text("New Tab", "新建标签页"),
+                                      action: #selector(DocumentController.newDocumentTab(_:)),
+                                      keyEquivalent: "")
+        newTab.target = NSDocumentController.shared
+        ShortcutManager.configure(newTab, commandID: "file.new")
+
+        let newWindow = fileMenu.addItem(
+            withTitle: AppCopy.text("New Window", "新建窗口"),
+            action: #selector(DocumentController.newDocumentWindow(_:)),
+            keyEquivalent: ""
+        )
+        newWindow.target = NSDocumentController.shared
+        ShortcutManager.configure(newWindow, commandID: "file.newWindow")
 
         let quickCapture = fileMenu.addItem(
             withTitle: AppCopy.text("New Quick Capture", "新建快速记录"),
@@ -429,15 +540,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                                     action: #selector(AppDelegate.openDocumentManually(_:)),
                                     keyEquivalent: "")
         ShortcutManager.configure(open, commandID: "file.open")
+        let openInNewWindow = fileMenu.addItem(
+            withTitle: AppCopy.text("Open in New Window…", "在新窗口中打开…"),
+            action: #selector(AppDelegate.openDocumentInNewWindowManually(_:)),
+            keyEquivalent: ""
+        )
+        ShortcutManager.configure(openInNewWindow, commandID: "file.openInNewWindow")
 
         // Recent documents submenu
         let recentMenuItem = NSMenuItem(title: AppCopy.text("Open Recent", "最近打开"), action: nil, keyEquivalent: "")
+        ShortcutManager.configure(recentMenuItem, commandID: "file.openRecent")
         let recentMenu = NSMenu(title: AppCopy.text("Open Recent", "最近打开"))
-        recentMenu.addItem(withTitle: AppCopy.text("Clear Menu", "清除菜单"),
-                           action: #selector(NSDocumentController.clearRecentDocuments(_:)),
-                           keyEquivalent: "")
+        recentMenu.autoenablesItems = false
+        recentMenu.delegate = self
+        recentDocumentsMenu = recentMenu
         recentMenuItem.submenu = recentMenu
         fileMenu.addItem(recentMenuItem)
+        rebuildRecentDocumentsMenu()
 
         fileMenu.addItem(NSMenuItem.separator())
 
@@ -449,6 +568,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let saveAs = fileMenu.addItem(withTitle: AppCopy.text("Save As…", "另存为…"),
                                       action: #selector(NSDocument.saveAs(_:)), keyEquivalent: "")
         ShortcutManager.configure(saveAs, commandID: "file.saveAs")
+
+        let commitCurrentFile = fileMenu.addItem(
+            withTitle: AppCopy.text("Commit Current File…", "提交当前文件…"),
+            action: #selector(Document.commitCurrentFile(_:)),
+            keyEquivalent: ""
+        )
+        ShortcutManager.configure(commitCurrentFile, commandID: "file.commitCurrentFile")
 
         fileMenu.addItem(withTitle: AppCopy.text("Revert To Saved", "恢复到已保存版本"),
                          action: #selector(NSDocument.revertToSaved(_:)), keyEquivalent: "")

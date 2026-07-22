@@ -50,6 +50,6 @@ let package = Package(
             ]),
         .testTarget(
             name: "FloralMDTests",
-            dependencies: ["FloralMDCore"]),
+            dependencies: ["FloralMDCore", "floralmd"]),
     ]
 )

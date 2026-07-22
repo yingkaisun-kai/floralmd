@@ -104,6 +104,7 @@ extension EditorTextView {
         let indicatorDeltaDescription = indicatorDelta.map { String(describing: $0) } ?? "nil"
         let centerDeltaDescription = centerDelta.map { String(describing: $0) } ?? "nil"
         let viewport = enclosingScrollView?.contentView.bounds ?? .zero
+        let emptyParagraph = reproEmptyParagraphGeometryState
         return "\(diagnosticState) "
             + "indicator={\(fontHeightInsertionIndicator.frame.minX),"
             + "\(fontHeightInsertionIndicator.frame.minY),"
@@ -114,7 +115,56 @@ extension EditorTextView {
             + "centerDelta=\(centerDeltaDescription) "
             + "viewFrame={\(frame.minY),\(frame.height)} "
             + "viewport={\(viewport.minY),\(viewport.height)} "
-            + "markedSelectionEnd=\(marked.location == NSNotFound ? -1 : NSMaxRange(marked))"
+            + "markedSelectionEnd=\(marked.location == NSNotFound ? -1 : NSMaxRange(marked)) "
+            + emptyParagraph
+    }
+
+    /// Distinguishes the three quantities that coincide only after an empty
+    /// paragraph has real content: the synthetic line, the explicit
+    /// insertion indicator, and TextKit 2's fragment/line at the selection.
+    public var reproEmptyParagraphGeometryState: String {
+        func rect(_ value: CGRect?) -> String {
+            guard let value else { return "nil" }
+            return "{\(value.minX),\(value.minY),\(value.width),\(value.height)}"
+        }
+
+        let offset = min(max(0, selectedRange().location), textStorage?.length ?? 0)
+        let synthetic = lineRect(forCharacterAt: offset)
+        let computedIndicator = currentFontHeightInsertionPointFrame()
+        var fragmentFrame: CGRect?
+        var lineFrame: CGRect?
+        var elementRange = "nil"
+        if let tlm = textLayoutManager,
+           let location = tlm.location(tlm.documentRange.location, offsetBy: offset) {
+            tlm.ensureLayout(for: NSTextRange(location: location))
+            if let fragment = tlm.textLayoutFragment(for: location) {
+                fragmentFrame = fragment.layoutFragmentFrame
+                if let start = fragment.textElement?.elementRange?.location,
+                   let range = fragment.textElement?.elementRange {
+                    let startOffset = tlm.offset(from: tlm.documentRange.location, to: start)
+                    let endOffset = tlm.offset(from: tlm.documentRange.location,
+                                               to: range.endLocation)
+                    elementRange = "{\(startOffset),\(endOffset - startOffset)}"
+                    let inElement = tlm.offset(from: start, to: location)
+                    let line = fragment.textLineFragments.first {
+                        inElement >= $0.characterRange.location
+                            && inElement <= NSMaxRange($0.characterRange)
+                    } ?? fragment.textLineFragments.last
+                    if let line {
+                        lineFrame = line.typographicBounds.offsetBy(
+                            dx: fragment.layoutFragmentFrame.minX,
+                            dy: fragment.layoutFragmentFrame.minY
+                        )
+                    }
+                }
+            }
+        }
+        return "emptyParagraphGeometry offset=\(offset) "
+            + "synthetic=\(rect(synthetic)) "
+            + "computedIndicator=\(rect(computedIndicator)) "
+            + "drawnIndicator=\(rect(fontHeightInsertionIndicator.frame)) "
+            + "fragment=\(rect(fragmentFrame)) line=\(rect(lineFrame)) "
+            + "elementRange=\(elementRange)"
     }
     #endif
 

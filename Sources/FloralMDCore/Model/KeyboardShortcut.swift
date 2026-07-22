@@ -103,6 +103,7 @@ public enum ShortcutCatalog {
     private static let command = NSEvent.ModifierFlags.command
     private static let commandShift: NSEvent.ModifierFlags = [.command, .shift]
     private static let commandOption: NSEvent.ModifierFlags = [.command, .option]
+    private static let control: NSEvent.ModifierFlags = [.control]
     private static let commandControl: NSEvent.ModifierFlags = [.command, .control]
     private static let commandControlShift: NSEvent.ModifierFlags = [.command, .control, .shift]
     private static let commandOptionShift: NSEvent.ModifierFlags = [.command, .option, .shift]
@@ -120,11 +121,20 @@ public enum ShortcutCatalog {
         locked("app.quit", .application, "Quit FloralMD", "退出 FloralMD", "q",
                appearsInCommandPalette: false),
 
-        locked("file.new", .file, "New", "新建", "n", appearsInCommandPalette: true),
+        locked("file.new", .file, "New Tab", "新建标签页", "n",
+               appearsInCommandPalette: true),
+        locked("file.newWindow", .file, "New Window", "新建窗口", "n", commandShift,
+               appearsInCommandPalette: true),
         locked("file.open", .file, "Open…", "打开…", "o", appearsInCommandPalette: true),
+        locked("file.openRecent", .file, "Open Recent", "最近打开", "r", control,
+               appearsInCommandPalette: true),
+        custom("file.openInNewWindow", .file,
+               "Open in New Window…", "在新窗口中打开…", nil),
         locked("file.save", .file, "Save", "保存", "s", appearsInCommandPalette: true),
         locked("file.saveAs", .file, "Save As…", "另存为…", "s", commandShift,
                appearsInCommandPalette: true),
+        custom("file.commitCurrentFile", .file,
+               "Commit Current File…", "提交当前文件…", nil),
         custom("file.exportPDF", .file, "Export as PDF…", "导出为 PDF…",
                .application("p", commandOption)),
         locked("file.print", .file, "Print…", "打印…", "p", appearsInCommandPalette: true),

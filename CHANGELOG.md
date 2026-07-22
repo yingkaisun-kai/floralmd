@@ -11,6 +11,73 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.7.11] — 2026-07-23
+
+### 中文
+
+#### 新增
+- “最近打开”现在会列出可用的最近文档，并提供居中的文件选择器、父目录路径、
+  `Control-R` 快捷键和命令面板入口。
+- 未保存的空白文档现在会显示轻量欢迎背景，可直接打开文件或最近文档；新标签、
+  新窗口，以及输入后再次清空的未命名文档都会使用同一状态。
+- Git 面板现在可以在确认仓库、分支和目标路径后，只提交当前 Markdown 文件；提交
+  信息会预填为 `document: 更新该文档`，其他文件原有的暂存与未暂存状态保持不变，
+  且不会自动推送。
+- Git 面板新增只读历史视图，可查看最近 80 个提交的分支与合并图、HEAD、短哈希、
+  提交信息、作者和时间；选择提交后可查看父提交、本地分支并复制完整哈希。
+
+#### 变更
+- `Command-O` 现在默认把文件打开到当前原生标签组；`Command-N` 新建标签，
+  `Command-Shift-N` 仍可显式新建独立窗口。
+- 文件/Git 侧栏现在可以拖动调整宽度，并在 Git 下使用“改动/历史”二级导航；
+  折叠、窗口缩放与标签切换时会保留当前会话布局。
+
+#### 修复
+- 修复通过隐藏标签流程打开文件或新建文档后，编辑内容没有立即更新 Git 状态的问题。
+- 修复在已有内容之间或文末按 Return 创建空段落时，光标与实际首字符行高不一致，
+  导致输入首字符后才跳到正确行距的问题。
+- 修复开启打字机滚动后在文末按 Return 时，可见光标会在旧行短暂停留并闪烁的问题；
+  默认与较大行距下的首次和连续 Return 现在会立即显示在最终位置。
+- 修复欢迎背景中的“打开文件”偶尔无法点击，以及最近文件悬停时光标在箭头与手型
+  之间闪烁的问题。
+
+### English
+
+#### Added
+- Open Recent now lists available recent documents through a centered chooser
+  with parent paths, a `Control-R` shortcut, and a Command Palette entry.
+- Unsaved empty documents now show a quiet welcome background for opening a file
+  or recent document. New tabs, new windows, and untitled documents cleared after
+  typing share the same state.
+- The Git panel can now commit only the current Markdown file after confirming the
+  repository, branch, and target path. The message is prefilled as
+  `document: 更新该文档`; existing staged and unstaged changes in other files are
+  preserved, and nothing is pushed automatically.
+- The Git panel now includes a read-only history view for the latest 80 commits,
+  showing branch and merge topology, HEAD, short hashes, subjects, authors, and
+  times. Selecting a commit reveals its parents and local branches and can copy
+  the full hash.
+
+#### Changed
+- `Command-O` now opens files in the current native tab group. `Command-N` creates
+  a new tab, while `Command-Shift-N` explicitly creates a separate window.
+- The Files/Git sidebar is now resizable and uses nested Changes/History navigation
+  under Git. Its current width and mode survive collapse, window resizing, and
+  native tab changes.
+
+#### Fixed
+- Fixed Git status not updating immediately after opening or creating documents
+  through the hidden-tab presentation path.
+- Fixed empty paragraphs created with Return between existing content or at the
+  end of a document using different caret and first-glyph geometry, which made the
+  caret jump to the configured line spacing only after typing.
+- Fixed the visible caret briefly remaining on the previous line and flickering
+  after Return at the end of a document with typewriter scrolling enabled. First
+  and consecutive Returns now draw at their final position immediately with both
+  default and larger line spacing.
+- Fixed the welcome background's Open File action occasionally ignoring clicks
+  and recent-document hover cursors flickering between arrow and pointing hand.
+
 ## [2026.7.10] — 2026-07-21
 
 ### 中文

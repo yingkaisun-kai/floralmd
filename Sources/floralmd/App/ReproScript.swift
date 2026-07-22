@@ -14,6 +14,7 @@ import FloralMDCore
 ///   caret <needle>    place the caret before the first occurrence of <needle>
 ///   wiki <target>     follow a wikilink target through live navigation
 ///   type <text>       type text, one key event per character
+///   keyreturn         press Return through window.sendEvent / input context
 ///   backspace <n>     press delete n times (300ms apart)
 ///   space <n>         insert n literal spaces
 ///   mark <text>       set provisional IME marked text
@@ -150,6 +151,9 @@ enum ReproScript {
                 }
             case "return":
                 schedule(after: delay) { $0.insertText("\n", replacementRange: NSRange(location: NSNotFound, length: 0)) }
+                delay += 0.05
+            case "keyreturn":
+                schedule(after: delay) { press("\r", keyCode: 36, in: $0) }
                 delay += 0.05
             case "tab":
                 schedule(after: delay) { $0.insertTab(nil) }

@@ -61,12 +61,10 @@ extension EditorTextView {
             fontHeightInsertionIndicator.displayMode == .hidden ? .visible : .hidden
     }
 
-    /// TextKit 2 has no fragment for the terminal empty paragraph after trailing
-    /// newlines. AppKit still reports its screen-space insertion rect, so use
-    /// that as the positional fallback and shorten it to the effective font.
+    /// TextKit 2 can absorb an empty paragraph's boundary into the preceding
+    /// fragment until the paragraph gains a real glyph. Prefer our synthetic
+    /// empty-line geometry so the short caret does not jump on that first glyph.
     func currentFontHeightInsertionPointFrame() -> NSRect? {
-        if let measured = fontHeightInsertionPointFrame() { return measured }
-
         let offset = min(max(0, selectedRange().location), (rawSource as NSString).length)
         if offset == 0, rawSource.isEmpty {
             let lineHeight = ceil(bodyFont.ascender - bodyFont.descender) + theme.lineSpacing
@@ -76,15 +74,13 @@ extension EditorTextView {
                                   height: lineHeight)
             return fontHeightInsertionPointRect(from: proposed)
         }
-        if offset == (rawSource as NSString).length,
-           rawSource.hasSuffix("\n"),
-           let terminalLine = lineRect(forCharacterAt: offset) {
-            let proposed = NSRect(x: textContainerOrigin.x + terminalLine.minX,
-                                  y: textContainerOrigin.y + terminalLine.minY,
-                                  width: 2,
-                                  height: terminalLine.height)
-            return fontHeightInsertionPointRect(from: proposed)
-        }
+        let measured = fontHeightInsertionPointFrame()
+        if hasMarkedText(), let measured { return measured }
+        let emptyParagraph = emptyParagraphInsertionPointFrame(at: offset)
+        if let resolved = Self.preferredInsertionPointFrame(
+            measured: measured,
+            syntheticEmptyLine: emptyParagraph
+        ) { return resolved }
 
         guard let window else { return nil }
         var actualRange = NSRange()
@@ -94,6 +90,35 @@ extension EditorTextView {
         let windowRect = window.convertFromScreen(screenRect)
         let proposed = convert(windowRect, from: nil)
         return fontHeightInsertionPointRect(from: proposed)
+    }
+
+    private func emptyParagraphInsertionPointFrame(at offset: Int) -> NSRect? {
+        guard Self.isEmptyParagraphInsertionOffset(offset, in: rawSource),
+              let emptyLine = lineRect(forCharacterAt: offset)
+        else { return nil }
+        let proposed = NSRect(x: textContainerOrigin.x + emptyLine.minX,
+                              y: textContainerOrigin.y + emptyLine.minY,
+                              width: 2,
+                              height: emptyLine.height)
+        return fontHeightInsertionPointRect(from: proposed)
+    }
+
+    /// Keep this resolver explicit so the synthetic empty paragraph wins over
+    /// a boundary location that TextKit 2 reports in the preceding fragment.
+    static func preferredInsertionPointFrame(
+        measured: NSRect?,
+        syntheticEmptyLine: NSRect?
+    ) -> NSRect? {
+        syntheticEmptyLine ?? measured
+    }
+
+    static func isEmptyParagraphInsertionOffset(_ offset: Int, in source: String) -> Bool {
+        let utf16 = source as NSString
+        guard offset > 0,
+              offset <= utf16.length,
+              utf16.character(at: offset - 1) == 0x000A
+        else { return false }
+        return offset == utf16.length || utf16.character(at: offset) == 0x000A
     }
 
     /// Shrink a system-proposed line-box rect while preserving its position.

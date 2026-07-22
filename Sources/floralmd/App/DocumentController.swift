@@ -49,6 +49,47 @@ private final class PendingDocumentTrashRequest {
     }
 }
 
+@MainActor
+private final class SystemRecentDocumentStore: RecentDocumentStoring {
+    unowned let controller: NSDocumentController
+    private var pendingWrite: [URL]?
+
+    init(controller: NSDocumentController) {
+        self.controller = controller
+    }
+
+    var recentDocumentURLs: [URL] {
+        let systemURLs = controller.recentDocumentURLs.map(\.standardizedFileURL)
+        guard let pendingWrite else { return systemURLs }
+        // AppKit persists recent items asynchronously, and a Debug bundle
+        // without CFBundleDocumentTypes can keep reporting the pre-write
+        // snapshot. Mirror only our outstanding write so menus update
+        // immediately while NSDocumentController remains the durable store.
+        if systemURLs == pendingWrite {
+            self.pendingWrite = nil
+            return systemURLs
+        }
+        return pendingWrite
+    }
+
+    var maximumRecentDocumentCount: Int {
+        controller.maximumRecentDocumentCount
+    }
+
+    func noteNewRecentDocumentURL(_ url: URL) {
+        let candidate = url.standardizedFileURL
+        let current = pendingWrite ?? controller.recentDocumentURLs.map(\.standardizedFileURL)
+        pendingWrite = Array(([candidate] + current.filter { $0 != candidate })
+            .prefix(maximumRecentDocumentCount))
+        controller.noteNewRecentDocumentURL(url)
+    }
+
+    func clearRecentDocuments() {
+        pendingWrite = []
+        controller.clearRecentDocuments(nil)
+    }
+}
+
 /// Custom document controller that registers our Document class for markdown files.
 ///
 /// Without an Info.plist (SPM executable), NSDocumentController's default
@@ -62,10 +103,57 @@ class DocumentController: NSDocumentController {
     private let fileRecycler: any DocumentFileRecycling = WorkspaceDocumentFileRecycler()
     private var pendingTrashURLs = Set<URL>()
     private var pendingTrashCloseRequests: [ObjectIdentifier: PendingDocumentTrashRequest] = [:]
+    private lazy var recentDocumentHistory = RecentDocumentHistory(
+        store: SystemRecentDocumentStore(controller: self)
+    )
 
     override func removeDocument(_ document: NSDocument) {
         super.removeDocument(document)
         NotificationCenter.default.post(name: Self.documentsDidChange, object: self)
+    }
+
+    // MARK: - New Document Presentation
+
+    /// Command-N is a product-level tab command, not AppKit's preference-driven
+    /// `newDocument(_:)`. Only an ordinary document window can receive the new
+    /// tab; Quick Capture remains a standalone transient surface.
+    @MainActor @objc func newDocumentTab(_ sender: Any?) {
+        let source = (currentDocument as? Document).flatMap { document in
+            document.isQuickCapture ? nil : document
+        }
+        createUntitledDocument(from: source, request: .tab)
+    }
+
+    /// Command-Shift-N explicitly requests a standalone ordinary window.
+    @MainActor @objc func newDocumentWindow(_ sender: Any?) {
+        createUntitledDocument(from: nil, request: .window)
+    }
+
+    @MainActor
+    private func createUntitledDocument(
+        from source: Document?,
+        request: ApplicationLifecyclePolicy.NewDocumentRequest
+    ) {
+        do {
+            guard let target = try openUntitledDocumentAndDisplay(false) as? Document else {
+                return
+            }
+            let presentation = ApplicationLifecyclePolicy.newDocumentPresentation(
+                hasOrdinarySourceWindow: source?.windowControllers.first?.window != nil,
+                request: request
+            )
+            switch presentation {
+            case .currentTabGroup:
+                guard let source else { return }
+                target.prepareForHiddenWindowPresentation()
+                activateDocumentTab(target, beside: source)
+            case .newWindow:
+                target.activateAsStandaloneDocumentWindow()
+            }
+            NotificationCenter.default.post(name: Self.documentsDidChange, object: self)
+        } catch {
+            NSApplication.shared.presentError(error)
+        }
     }
 
     // MARK: - Application Termination
@@ -204,6 +292,14 @@ class DocumentController: NSDocumentController {
         "net.daringfireball.markdown"
     }
 
+    /// Debug intentionally omits CFBundleDocumentTypes, which makes AppKit's
+    /// default recent-document limit zero. Declare the product's existing
+    /// five-item system-list limit here so Debug and Production exercise the
+    /// same Open Recent behavior.
+    nonisolated override var maximumRecentDocumentCount: Int {
+        5
+    }
+
     override func documentClass(forType typeName: String) -> AnyClass? {
         Document.self
     }
@@ -230,15 +326,85 @@ class DocumentController: NSDocumentController {
         // Allow all files — our read(from:ofType:) handles UTF-8 decoding.
         panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
+        let sourceDocument = currentDocument as? Document
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            self.openDocument(withContentsOf: url, display: true) { _, _, error in
-                if let error = error {
+            self.openDocument(at: url, from: sourceDocument, requestsNewWindow: false)
+        }
+    }
+
+    /// Resolves the product-level presentation before entering AppKit's
+    /// document-loading API. File location never decides tab membership.
+    @MainActor
+    func openDocument(at url: URL,
+                      from source: Document?,
+                      requestsNewWindow: Bool,
+                      completion: (@MainActor (Error?) -> Void)? = nil) {
+        let presentation = ApplicationLifecyclePolicy.documentOpenPresentation(
+            hasSourceWindow: source?.windowControllers.first?.window != nil,
+            requestsNewWindow: requestsNewWindow
+        )
+        switch presentation {
+        case .currentTabGroup:
+            guard let source else {
+                completion?(NSError(
+                    domain: "FloralMD.DocumentOpen",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: AppCopy.text(
+                        "The current document window is no longer available.",
+                        "当前文档窗口已不可用。"
+                    )]
+                ))
+                return
+            }
+            openDocumentTab(at: url, from: source, completion: completion)
+        case .newWindow:
+            openDocument(withContentsOf: url, display: true) { _, _, error in
+                if let error {
                     NSAlert(error: error).runModal()
                 }
+                completion?(error)
             }
         }
+    }
+
+    /// Routes a recent item through the same current-tab-group semantics as
+    /// Command-O. A file can disappear after the menu was built, so validate
+    /// again at activation time and remove only the failed entry.
+    @MainActor
+    func openRecentDocument(at url: URL, from source: Document?) {
+        guard recentDocumentHistory.containsAvailableDocument(at: url) else {
+            presentUnavailableRecentDocumentError()
+            return
+        }
+        openDocument(at: url, from: source, requestsNewWindow: false) { [weak self] error in
+            guard let self, error != nil else { return }
+            self.recentDocumentHistory.removeDocument(at: url)
+        }
+    }
+
+    @MainActor
+    func availableRecentDocumentURLs() -> [URL] {
+        recentDocumentHistory.availableDocumentURLs()
+    }
+
+    @MainActor
+    func clearRecentDocumentHistory() {
+        recentDocumentHistory.clear()
+    }
+
+    @MainActor
+    private func presentUnavailableRecentDocumentError() {
+        let error = NSError(
+            domain: "FloralMD.RecentDocument",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: AppCopy.text(
+                "The recent file was moved, deleted, or is no longer readable.",
+                "最近使用的文件已被移动、删除或不再可读。"
+            )]
+        )
+        NSAlert(error: error).runModal()
     }
 
     // MARK: - Untitled Window Cleanup
@@ -251,6 +417,9 @@ class DocumentController: NSDocumentController {
         super.openDocument(withContentsOf: url, display: displayDocument) { document, alreadyOpen, error in
             if let document, error == nil {
                 self.closeLastUntouchedUntitledWindow(keeping: document)
+                if let fileURL = document.fileURL {
+                    self.recentDocumentHistory.recordOpenedDocument(at: fileURL)
+                }
             }
             NotificationCenter.default.post(name: Self.documentsDidChange, object: self)
             completionHandler(document, alreadyOpen, error)
@@ -260,19 +429,47 @@ class DocumentController: NSDocumentController {
     /// Opens a file as a native tab beside `source`, or activates its existing
     /// document tab. NSDocument remains the owner of saving and dirty state.
     @MainActor
-    func openDocumentTab(at url: URL, from source: Document) {
+    func openDocumentTab(at url: URL,
+                         from source: Document,
+                         completion: (@MainActor (Error?) -> Void)? = nil) {
         // A sidebar open is always destined for an existing tab group. Keep a
         // new document hidden until that membership is established so it can
         // never appear first as a standalone window.
-        openDocument(withContentsOf: url, display: false) { document, _, error in
+        openDocument(withContentsOf: url, display: false) { document, alreadyOpen, error in
             if let error {
                 NSAlert(error: error).runModal()
+                completion?(error)
                 return
             }
-            guard let target = document as? Document else { return }
+            guard let target = document as? Document else {
+                let error = NSError(
+                    domain: "FloralMD.DocumentOpen",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: AppCopy.text(
+                        "The document could not be opened.",
+                        "无法打开文档。"
+                    )]
+                )
+                completion?(error)
+                return
+            }
+            if alreadyOpen {
+                self.activateExistingDocument(target)
+                completion?(nil)
+                return
+            }
             target.prepareForHiddenWindowPresentation()
             self.activateDocumentTab(target, beside: source)
+            completion?(nil)
         }
+    }
+
+    @MainActor
+    private func activateExistingDocument(_ document: Document) {
+        if !document.activateAllSpacesPinnedPanelIfPresented() {
+            document.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
+        }
+        document.refreshNavigationSidebar()
     }
 
     @MainActor
@@ -280,8 +477,12 @@ class DocumentController: NSDocumentController {
         guard let targetWindow = target.windowControllers.first?.window else { return }
         if target !== source, let sourceWindow = source.windowControllers.first?.window {
             let inheritedPinningMode = source.windowPinningMode
-            if inheritedPinningMode == .allSpaces,
-               source.activateDocumentIncrementallyInAllSpaces(target) {
+            let activatedIncrementallyInAllSpaces = inheritedPinningMode == .allSpaces
+                && source.activateDocumentIncrementallyInAllSpaces(target)
+            let completion = ApplicationLifecyclePolicy.hiddenDocumentPresentationCompletion(
+                activatedIncrementallyInAllSpaces: activatedIncrementallyInAllSpaces
+            )
+            if activatedIncrementallyInAllSpaces {
                 return
             }
             source.prepareForNativeTabMutation()
@@ -295,12 +496,19 @@ class DocumentController: NSDocumentController {
             if inheritedPinningMode == .allSpaces {
                 target.setPinningMode(inheritedPinningMode)
             }
+            if completion == .afterNativeTabActivation {
+                target.finishHiddenWindowPresentationSetup()
+            }
         } else {
             if !target.activateAllSpacesPinnedPanelIfPresented() {
                 targetWindow.makeKeyAndOrderFront(nil)
             }
         }
-        target.refreshNavigationSidebar()
+        // Existing-document activation did not load hidden content and only
+        // needs the current navigation selection refreshed.
+        if target === source {
+            target.refreshNavigationSidebar()
+        }
     }
 
     /// The file tree and titlebar share this entry point. Open documents move

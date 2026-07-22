@@ -6,6 +6,7 @@ enum CommandDispatcher {
     private static let documentRequiredCommands: Set<String> = [
         "file.save",
         "file.saveAs",
+        "file.commitCurrentFile",
         "file.exportPDF",
         "file.print",
         "file.close",
@@ -44,6 +45,12 @@ enum CommandDispatcher {
     }
 
     static func canExecute(_ commandID: String) -> Bool {
+        if commandID == "file.openRecent" {
+            guard let controller = NSDocumentController.shared as? DocumentController else {
+                return false
+            }
+            return !controller.availableRecentDocumentURLs().isEmpty
+        }
         if documentRequiredCommands.contains(commandID),
            NSDocumentController.shared.currentDocument == nil {
             return false
@@ -93,17 +100,31 @@ enum CommandDispatcher {
             return Invocation(#selector(AppDelegate.checkForUpdates(_:)), target: appDelegate)
         case "file.new":
             return Invocation(
-                #selector(NSDocumentController.newDocument(_:)),
+                #selector(DocumentController.newDocumentTab(_:)),
+                target: NSDocumentController.shared
+            )
+        case "file.newWindow":
+            return Invocation(
+                #selector(DocumentController.newDocumentWindow(_:)),
                 target: NSDocumentController.shared
             )
         case "file.quickCapture":
             return Invocation(#selector(AppDelegate.performQuickCapture(_:)), target: appDelegate)
         case "file.open":
             return Invocation(#selector(AppDelegate.openDocumentManually(_:)), target: appDelegate)
+        case "file.openRecent":
+            return Invocation(#selector(AppDelegate.showRecentDocuments(_:)), target: appDelegate)
+        case "file.openInNewWindow":
+            return Invocation(
+                #selector(AppDelegate.openDocumentInNewWindowManually(_:)),
+                target: appDelegate
+            )
         case "file.save":
             return Invocation(#selector(NSDocument.save(_:)))
         case "file.saveAs":
             return Invocation(#selector(NSDocument.saveAs(_:)))
+        case "file.commitCurrentFile":
+            return Invocation(#selector(Document.commitCurrentFile(_:)))
         case "file.exportPDF":
             return Invocation(#selector(Document.exportToPDF(_:)))
         case "file.print":

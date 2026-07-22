@@ -86,6 +86,16 @@ public class EditorTextView: NSTextView {
     /// ordinary text path unchanged.
     public var imagePasteHandler: (() -> Bool)?
 
+    /// Presentation-only signal that an accepted user text input is beginning.
+    /// Callers may hide document-external chrome, but must never mutate storage
+    /// or selection from this callback.
+    public var textInputDidBegin: (() -> Void)?
+
+    /// Presentation-only signal that an IME composition has relinquished its
+    /// marked range. Callers defer their read-only state check until the next
+    /// run-loop turn so a committed composition can finish syncing rawSource.
+    public var textInputDidEndComposition: (() -> Void)?
+
     /// Localized edit-mode code-copy labels. The app layer supplies the same
     /// strings used by Read mode; Core defaults to English for tests/embedding.
     public var codeBlockCopyStrings: ReadModeCopyStrings = .english {
@@ -902,17 +912,23 @@ public class EditorTextView: NSTextView {
     public override func setMarkedText(_ string: Any,
                                        selectedRange: NSRange,
                                        replacementRange: NSRange) {
+        let wasComposing = hasMarkedText()
+        textInputDidBegin?()
         super.setMarkedText(string,
                             selectedRange: selectedRange,
                             replacementRange: replacementRange)
         traceEdit("setMarkedText selected=\(selectedRange) replacement=\(replacementRange)")
         scheduleFontHeightInsertionIndicatorUpdate()
+        if wasComposing, !hasMarkedText() {
+            textInputDidEndComposition?()
+        }
     }
 
     public override func unmarkText() {
         super.unmarkText()
         traceEdit("unmarkText")
         scheduleFontHeightInsertionIndicatorUpdate()
+        textInputDidEndComposition?()
     }
 
     /// Window close and application termination can begin while an input method

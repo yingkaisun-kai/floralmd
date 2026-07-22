@@ -96,4 +96,86 @@ struct InternationalInputTests {
         let committed = (editor.textStorage!.string as NSString).range(of: script.sample)
         #expect(allGraphemesCovered(committed, in: editor.textStorage!))
     }
+
+    @Test("IME composition emits the presentation signal without consuming marked text")
+    @MainActor func imeCompositionEmitsPresentationSignal() {
+        let editor = makeEditor()
+        editor.loadContent("")
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        var inputBegan = false
+        editor.textInputDidBegin = { inputBegan = true }
+
+        editor.setMarkedText(
+            "ni",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        #expect(inputBegan)
+        #expect(editor.hasMarkedText())
+        #expect(editor.markedRange() == NSRange(location: 0, length: 2))
+        #expect(editor.string == "ni")
+        #expect(editor.rawSource.isEmpty)
+    }
+
+    @Test("First direct input emits the presentation signal and reaches the document")
+    @MainActor func directInputEmitsPresentationSignal() {
+        let editor = makeEditor()
+        editor.loadContent("")
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        var inputBegan = false
+        editor.textInputDidBegin = { inputBegan = true }
+
+        editor.insertText("a", replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        #expect(inputBegan)
+        #expect(editor.string == "a")
+        #expect(editor.rawSource == "a")
+    }
+
+    @Test("Ending IME composition emits a presentation refresh signal")
+    @MainActor func endingCompositionEmitsPresentationSignal() {
+        let editor = makeEditor()
+        editor.loadContent("")
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        var compositionEnded = false
+        editor.textInputDidEndComposition = { compositionEnded = true }
+
+        editor.setMarkedText(
+            "ni",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        #expect(!compositionEnded)
+
+        editor.unmarkText()
+        #expect(compositionEnded)
+        #expect(!editor.hasMarkedText())
+        #expect(editor.string == "ni")
+    }
+
+    @Test("Cancelling marked text emits the end signal and leaves source blank")
+    @MainActor func cancellingCompositionEmitsPresentationSignal() {
+        let editor = makeEditor()
+        editor.loadContent("")
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        var compositionEnded = false
+        editor.textInputDidEndComposition = { compositionEnded = true }
+
+        editor.setMarkedText(
+            "ni",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        editor.setMarkedText(
+            "",
+            selectedRange: NSRange(location: 0, length: 0),
+            replacementRange: editor.markedRange()
+        )
+
+        #expect(compositionEnded)
+        #expect(!editor.hasMarkedText())
+        #expect(editor.string.isEmpty)
+        #expect(editor.rawSource.isEmpty)
+    }
 }

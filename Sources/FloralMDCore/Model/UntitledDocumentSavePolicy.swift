@@ -37,6 +37,24 @@ public enum UntitledDocumentContentPolicy {
     }
 }
 
+/// The welcome surface is another consumer of the product-wide definition of
+/// a disposable blank untitled document. It deliberately has no creation-source
+/// or one-shot state: saving, committed edits, and marked text make the current
+/// document ineligible; deleting back to semantic blank makes it eligible again.
+public enum UntitledWelcomePresentationPolicy {
+    public static func shouldPresent(
+        hasFileURL: Bool,
+        rawSource: String,
+        hasMarkedText: Bool
+    ) -> Bool {
+        UntitledDocumentContentPolicy.isDiscardableBlankUntitled(
+            hasFileURL: hasFileURL,
+            rawSource: rawSource,
+            hasMarkedText: hasMarkedText
+        )
+    }
+}
+
 /// Pure policy and state transitions for automatically giving a draft its
 /// first file URL. Subsequent saves remain entirely owned by NSDocument.
 public enum UntitledDocumentSavePolicy {
