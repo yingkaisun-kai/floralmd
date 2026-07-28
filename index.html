@@ -5,107 +5,112 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta
       name="description"
-      content="FloralMD 是一款本地离线、只读的 iOS Markdown 阅读器。"
+      content="FloralMD 为 iOS 与 macOS 提供各自独立的原生 Markdown 体验。"
     >
-    <title>FloralMD — iOS Markdown 阅读器</title>
+    <title>FloralMD — Markdown for iOS and macOS</title>
+    <link rel="icon" href="./app-icon.png">
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
     <header class="site-header">
       <a class="brand" href="./" aria-label="FloralMD 首页">
-        <span class="brand-mark" aria-hidden="true">✦</span>
+        <img class="brand-icon" src="./app-icon.png" alt="">
         <span>FloralMD</span>
       </a>
       <nav class="site-nav" aria-label="主要导航">
         <a href="./" aria-current="page">首页</a>
-        <a href="./support/">支持</a>
-        <a href="./privacy/">隐私</a>
+        <a href="./support/">iOS 支持</a>
+        <a href="./privacy/">iOS 隐私</a>
       </nav>
     </header>
 
     <main class="page-shell" id="main">
       <section class="hero">
         <div>
-          <p class="eyebrow">FloralMD for iOS</p>
-          <h1>安静地阅读 Markdown。</h1>
+          <p class="eyebrow">FloralMD · iOS &amp; macOS</p>
+          <h1>两个平台，各自专注。</h1>
           <p class="hero-copy">
-            从“文件”或其他 App 导入 Markdown，保存一份只读的本地离线副本，
-            随时搜索、浏览大纲并专注阅读。原文件保持不变。
+            FloralMD 是分别面向 iOS 和 macOS 的原生 Markdown 产品。
+            iOS 版专注本地离线阅读，macOS 版则是一款独立发布的开源 Markdown 编辑器。
           </p>
           <div class="hero-actions">
-            <a class="button primary" href="./support/">获取支持</a>
-            <a class="button" href="./privacy/">查看隐私政策</a>
+            <a class="button primary" href="./support/">iOS 支持</a>
+            <a class="button" href="./privacy/">iOS 隐私政策</a>
           </div>
         </div>
-        <div class="reader-card" aria-label="Markdown 阅读界面示意">
-          <div class="reader-line heading"></div>
-          <div class="reader-line"></div>
-          <div class="reader-line"></div>
-          <div class="reader-line short"></div>
-          <div class="reader-code">
-            <div class="reader-line short"></div>
-            <div class="reader-line"></div>
-            <div class="reader-line short"></div>
-          </div>
+        <div class="app-icon-stage">
+          <img
+            class="hero-app-icon"
+            src="./app-icon.png"
+            alt="FloralMD App 图标"
+          >
         </div>
       </section>
 
       <section class="section">
         <div class="section-heading">
-          <p class="eyebrow">为阅读而设计</p>
-          <h2>文件在手，阅读在本机。</h2>
+          <p class="eyebrow">平台</p>
+          <h2>同一个名字，清晰的产品边界。</h2>
           <p class="section-intro">
-            FloralMD 不需要账户，也不会把文档上传到云端。
+            两个版本分别发布，功能与数据处理方式也各自独立。
           </p>
         </div>
-        <div class="feature-grid">
-          <article class="feature-card">
-            <h3>只读本地副本</h3>
-            <p>导入非空 UTF-8 `.md` 或 `.markdown` 文件，不修改原始文件。</p>
+        <div class="platform-grid">
+          <article class="platform-card">
+            <p class="platform-label">FloralMD for iOS</p>
+            <h3>本地离线阅读器</h3>
+            <p>
+              面向 Apple App Store 提供的只读 Markdown 阅读器。从“文件”或其他
+              App 导入文档，保存本地离线副本，不修改原始文件。
+            </p>
+            <p class="card-links">
+              <a href="./support/">支持</a>
+              <a href="./privacy/">隐私政策</a>
+            </p>
           </article>
-          <article class="feature-card">
-            <h3>快速找到内容</h3>
-            <p>通过最近文档、全文搜索和大纲，在长文档中快速定位。</p>
-          </article>
-          <article class="feature-card">
-            <h3>专注且可控</h3>
-            <p>调整阅读设置、复制代码，并在需要时分享原始 Markdown。</p>
+          <article class="platform-card">
+            <p class="platform-label">FloralMD for macOS</p>
+            <h3>独立发布的开源编辑器</h3>
+            <p>
+              面向本地 Markdown 文件的原生编辑器，提供行内实时预览。
+              macOS 版本不属于本网站 iOS 隐私政策的适用范围。
+            </p>
           </article>
         </div>
       </section>
 
       <section class="section english-block" lang="en">
         <div class="section-heading">
-          <p class="eyebrow">FloralMD for iOS</p>
-          <h2>A quiet place to read Markdown.</h2>
+          <p class="eyebrow">FloralMD · iOS &amp; macOS</p>
+          <h2>Two platforms, each with a clear focus.</h2>
           <p class="section-intro">
-            Import Markdown from Files or another app and keep a read-only,
-            offline copy on your device. Search the document, use its outline,
-            copy code, adjust reading preferences, or share the original
-            Markdown when you choose. Your source file stays unchanged.
+            FloralMD offers separate native Markdown products for iOS and
+            macOS. Each edition is distributed independently and has its own
+            features and data practices.
           </p>
         </div>
-        <div class="feature-grid">
-          <article class="feature-card">
-            <h3>Local and read-only</h3>
+        <div class="platform-grid">
+          <article class="platform-card">
+            <p class="platform-label">FloralMD for iOS</p>
+            <h3>Local, offline reading</h3>
             <p>
-              Imports non-empty UTF-8 `.md` and `.markdown` files without
-              modifying the original.
+              A read-only Markdown reader offered through the Apple App Store.
+              Import a document from Files or another app and keep an offline
+              copy on your device without modifying the source file.
+            </p>
+            <p class="card-links">
+              <a href="./support/">Support</a>
+              <a href="./privacy/">Privacy Policy</a>
             </p>
           </article>
-          <article class="feature-card">
-            <h3>Easy to navigate</h3>
+          <article class="platform-card">
+            <p class="platform-label">FloralMD for macOS</p>
+            <h3>Independently distributed and open source</h3>
             <p>
-              Recent documents, search, and an outline help you move through
-              longer files.
-            </p>
-          </article>
-          <article class="feature-card">
-            <h3>Focused by design</h3>
-            <p>
-              No account, analytics, advertising, tracking, or remote embedded
-              content.
+              A native editor for local Markdown files with inline live
+              preview. The macOS edition is not covered by this website’s iOS
+              Privacy Policy.
             </p>
           </article>
         </div>
@@ -115,8 +120,8 @@
     <footer class="site-footer">
       <span>© 2026 FloralMD</span>
       <span class="footer-links">
-        <a href="./support/">支持 / Support</a>
-        <a href="./privacy/">隐私 / Privacy</a>
+        <a href="./support/">iOS 支持 / Support</a>
+        <a href="./privacy/">iOS 隐私 / Privacy</a>
       </span>
     </footer>
   </body>

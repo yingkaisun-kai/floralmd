@@ -96,17 +96,10 @@ a:focus-visible {
   text-decoration: none;
 }
 
-.brand-mark {
-  display: grid;
+.brand-icon {
   width: 2rem;
   height: 2rem;
-  place-items: center;
-  color: white;
-  background: linear-gradient(145deg, #b96c84, #82445a);
-  border-radius: 0.72rem;
-  box-shadow: 0 6px 16px rgba(113, 54, 73, 0.2);
-  font-size: 1.15rem;
-  line-height: 1;
+  object-fit: contain;
 }
 
 .site-nav {
@@ -207,49 +200,16 @@ h1 {
   background: var(--accent-strong);
 }
 
-.reader-card {
-  position: relative;
-  overflow: hidden;
-  padding: 1.4rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 1.5rem;
-  box-shadow: var(--shadow);
+.app-icon-stage {
+  display: grid;
+  min-height: 22rem;
+  place-items: center;
 }
 
-.reader-card::before {
-  display: block;
-  width: 42%;
-  height: 0.45rem;
-  margin-bottom: 1.6rem;
-  background: var(--accent-soft);
-  border-radius: 999px;
-  content: "";
-}
-
-.reader-line {
-  height: 0.42rem;
-  margin-block: 0.7rem;
-  background: color-mix(in srgb, var(--text) 12%, transparent);
-  border-radius: 999px;
-}
-
-.reader-line.heading {
-  width: 68%;
-  height: 0.75rem;
-  margin-bottom: 1.15rem;
-  background: color-mix(in srgb, var(--text) 30%, transparent);
-}
-
-.reader-line.short {
-  width: 72%;
-}
-
-.reader-code {
-  margin-top: 1.4rem;
-  padding: 1rem;
-  background: color-mix(in srgb, var(--leaf) 9%, transparent);
-  border-radius: 0.8rem;
+.hero-app-icon {
+  width: min(20rem, 78vw);
+  height: auto;
+  filter: drop-shadow(0 1.6rem 2.5rem rgba(73, 54, 59, 0.18));
 }
 
 .section {
@@ -276,13 +236,15 @@ h1 {
   color: var(--muted);
 }
 
-.feature-grid {
+.feature-grid,
+.platform-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
 }
 
 .feature-card,
+.platform-card,
 .contact-card {
   padding: 1.35rem;
   background: var(--surface);
@@ -290,15 +252,40 @@ h1 {
   border-radius: 1rem;
 }
 
-.feature-card h3 {
+.feature-card h3,
+.platform-card h3 {
   margin: 0;
   font-size: 1.02rem;
 }
 
-.feature-card p {
+.feature-card p,
+.platform-card p {
   margin: 0.5rem 0 0;
   color: var(--muted);
   font-size: 0.94rem;
+}
+
+.platform-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.platform-label {
+  color: var(--leaf) !important;
+  font-size: 0.78rem !important;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.card-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding-top: 0.35rem;
+}
+
+.card-links a {
+  font-weight: 700;
 }
 
 .english-block {
@@ -387,11 +374,12 @@ h1 {
     min-height: auto;
   }
 
-  .reader-card {
-    max-width: 26rem;
+  .app-icon-stage {
+    min-height: auto;
   }
 
-  .feature-grid {
+  .feature-grid,
+  .platform-grid {
     grid-template-columns: 1fr;
   }
 
