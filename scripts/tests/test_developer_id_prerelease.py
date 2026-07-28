@@ -46,9 +46,19 @@ class PrereleaseMetadataTests(unittest.TestCase):
             {"issues": []},
         )
         self.assertEqual(result, ("submission-id", 0, 0))
+        result = prerelease.inspect_notary_result(
+            {"status": "Accepted", "id": "submission-id"},
+            {"issues": None},
+        )
+        self.assertEqual(result, ("submission-id", 0, 0))
         with self.assertRaisesRegex(ValueError, "not 'Accepted'"):
             prerelease.inspect_notary_result(
                 {"status": "Invalid", "id": "submission-id"}, {"issues": []}
+            )
+        with self.assertRaisesRegex(ValueError, "invalid issues"):
+            prerelease.inspect_notary_result(
+                {"status": "Accepted", "id": "submission-id"},
+                {"issues": "none"},
             )
         with self.assertRaisesRegex(ValueError, "1 error"):
             prerelease.inspect_notary_result(

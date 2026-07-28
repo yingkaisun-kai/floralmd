@@ -33,7 +33,11 @@ def inspect_notary_result(
     if not isinstance(submission_id, str) or not submission_id:
         raise ValueError("Apple notarization response has no submission id")
 
-    issues = log.get("issues", [])
+    # Apple's clean notarization log may encode "no issues" as null rather
+    # than an empty array.
+    issues = log.get("issues")
+    if issues is None:
+        issues = []
     if not isinstance(issues, list):
         raise ValueError("Apple notarization log has an invalid issues field")
     errors = 0
