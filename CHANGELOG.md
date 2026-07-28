@@ -11,6 +11,22 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.7.12] — 2026-07-29
+
+### 中文
+
+#### 变更
+- 首次提供由受保护 GitHub Actions 统一构建、Developer ID 签名并经 Apple
+  公证的 Mac 安装包。本次仅作为 GitHub Pre-release 发布，不进入稳定 Sparkle
+  更新通道。
+
+### English
+
+#### Changed
+- Added the first Mac installer built by protected GitHub Actions, signed with
+  Developer ID, and notarized by Apple. This build is published only as a
+  GitHub Pre-release and is not added to the stable Sparkle update channel.
+
 ## [2026.7.11] — 2026-07-23
 
 ### 中文

@@ -426,6 +426,31 @@ Sparkle 的稳定 feed URL 与 EdDSA 公钥内置在 `Info.plist`；私钥只存
 GitHub Release、用私钥签名 DMG，然后把新条目推入 `feed`。根目录不保存
 运行中的 appcast，避免 CI 生成的 feed 提交污染源码快照历史。
 
+Developer ID 分发先通过独立的受控预发布入口闭环，不能直接复用上述稳定发布者：
+`.github/workflows/developer-id-prerelease.yml` 只接受与
+`Info.plist` 精确对应的
+`preview-v<CFBundleShortVersionString>-build.<CFBundleVersion>` tag。无秘密的
+`test` job 先完成脚本测试、`swift test` 与 Production 候选装配；只有它通过后，
+引用受保护 `production` Environment 的 `release` job 才能读取证书、公证与 Sparkle
+Secrets。该 Environment 必须在 GitHub 侧配置 required reviewer 和仅允许 preview
+tag 的部署规则；workflow 文件本身不能替代账号侧保护。
+
+预发布 job 从同一 commit 重新构建唯一正式 App，使用 Developer ID Application
+identity 按 Sparkle helpers、framework、Quick Look、主 App 的由内到外顺序签名，
+所有可执行代码都要求 hardened runtime、secure timestamp 且不得包含
+`get-task-allow=true`。它先以 ZIP 提交 App 公证并 staple App，再从已 staple 的 App
+只创建一次 DMG；DMG 自身签名、公证、staple 后才成为最终字节。随后执行严格
+`codesign`、`stapler validate`、`spctl`、DMG 容器校验和 SHA-256 校验，用既有
+EdDSA 私钥对同一 DMG 生成旁路签名，并核对私钥导出的公钥仍等于 App 内置
+`SUPublicEDKey`。最终 DMG 经 GitHub artifact attestation 后作为 Pre-release 资产
+上传，上传后的服务器 SHA-256 必须与本地最终字节一致。这个 workflow 不检出
+`feed`、不运行 `update-appcast.py`，因此不会进入稳定 Sparkle 更新链。
+
+存在上述配置不等于已经完成 Developer ID 分发：只有受保护 job 的真实
+Developer ID 签名、Apple `Accepted` 公证结果、staple/Gatekeeper 门禁、GitHub
+Pre-release 资产，以及用户从 GitHub 下载后的独立安装手测，才能逐层升级证据状态。
+在这些证据完成前，README 对当前稳定版“临时签名、未公证”的描述仍然成立。
+
 `CHANGELOG.md` 是 GitHub Release 与 Sparkle 更新说明的共同来源。CalVer 版本
 保持 `## [YYYY.MM.PATCH] — YYYY-MM-DD` 边界，版本内固定先写完整的
 `### 中文` 区块及其 `#### 新增` / `#### 变更` / `#### 修复` 等类别，再写完整的
