@@ -319,6 +319,21 @@ class QuickLookBundleConfigurationTests(unittest.TestCase):
         self.assertIn("Quick Look extension version differs from the host app version", script)
         self.assertIn("Quick Look extension build differs from the host app build", script)
 
+    def test_quick_look_embeds_and_verifies_core_syntax_resources(self) -> None:
+        script = (ROOT / "scripts" / "build-app.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            '"${QUICK_LOOK_BUNDLE}/Contents/Resources/${CORE_RESOURCE_BUNDLE_NAME}"',
+            script,
+        )
+        self.assertIn(
+            "Quick Look extension is missing FloralMDCore syntax resources",
+            script,
+        )
+        self.assertIn(
+            "Quick Look accessor does not use Bundle.main.resourceURL",
+            script,
+        )
+
 
 class AppIconAssetTests(unittest.TestCase):
     def test_png_sources_preserve_alpha_channels(self) -> None:

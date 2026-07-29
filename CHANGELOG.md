@@ -11,6 +11,20 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.7.15] — 2026-07-29
+
+### 中文
+
+#### 修复
+- 修复包含 fenced code block 的 Markdown 文件在 Finder Quick Look 中会导致预览
+  扩展退出、随后回退为通用文件缩略图的问题。
+
+### English
+
+#### Fixed
+- Fixed Finder Quick Look crashing and falling back to a generic file thumbnail
+  when previewing Markdown documents that contain fenced code blocks.
+
 ## [2026.7.14] — 2026-07-29
 
 ### 中文

@@ -37,7 +37,11 @@ Quick Look `.appex` 是独立 bundle，不能依赖宿主图标或 IconServices 
 Production 与专项 Debug 扩展都在自己的 `Info.plist` 中以 `CFBundleIconFile`
 声明 `AppIcon`，并在 `Contents/Resources` 内携带与宿主逐字节相同的
 `AppIcon.icns`；构建时还会把扩展的营销版本与构建号同步到宿主，确保系统能识别
-新的扩展资源。`scripts/build-app.sh` 会在签名后的 bundle 验证这些条件。
+新的扩展资源。扩展也不能依赖宿主 App 中的 SwiftPM 资源包：代码块高亮会通过
+`Bundle.module` 读取 `FloralMD_FloralMDCore.bundle` 中的语法 JSON，因此 `.appex`
+必须在自己的 `Contents/Resources` 中携带该资源包，并使用 Xcode 生成、可从
+`Bundle.main.resourceURL` 查找资源的访问器。`scripts/build-app.sh` 会在签名后的
+bundle 验证这些条件。
 `AppIcon.icns` 还必须保留 alpha 通道：若圆角图标以不透明 RGB 画布封装，Finder
 和 DMG 会把圆角外的画布显示成白色方块。构建脚本会在复制资源前用 `sips` 拒绝
 这种产物，`Resources/AppIcon.png` 与 `docs/assets/AppIcon/` 中的派生 PNG 也统一

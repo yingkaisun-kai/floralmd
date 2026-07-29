@@ -53,6 +53,7 @@ case "$VARIANT" in
         BUNDLE="build/${APP_NAME}.app"
         BUILD_CONFIGURATION="debug"
         BUILD_PRODUCTS_DIR=".build/debug"
+        QUICK_LOOK_BUILD_PRODUCTS_DIR=".build/apple/Products/Debug"
         BUNDLE_EXECUTABLE="floralmd-debug"
         INFO_PLIST="Resources/Debug/Info.plist"
         QUICK_LOOK_NAME="FloralMD-Debug-QuickLook"
@@ -68,6 +69,7 @@ case "$VARIANT" in
         BUNDLE="build/${APP_NAME}.app"
         BUILD_CONFIGURATION="release"
         BUILD_PRODUCTS_DIR=".build/apple/Products/Release"
+        QUICK_LOOK_BUILD_PRODUCTS_DIR="$BUILD_PRODUCTS_DIR"
         BUNDLE_EXECUTABLE="floralmd"
         INFO_PLIST="Info.plist"
         QUICK_LOOK_NAME="FloralMDQuickLook"
@@ -85,6 +87,7 @@ esac
 
 SOURCE_EXECUTABLE="floralmd"
 SOURCE_QUICK_LOOK_EXECUTABLE="FloralMDQuickLook"
+CORE_RESOURCE_BUNDLE_NAME="FloralMD_FloralMDCore.bundle"
 QUICK_LOOK_BUNDLE="${BUNDLE}/Contents/PlugIns/${QUICK_LOOK_NAME}.appex"
 
 build_swift() {
@@ -107,7 +110,11 @@ else
     build_swift --product floralmd
     if [ "$INCLUDE_QUICK_LOOK" = true ]; then
         echo "Building isolated Debug Quick Look extension..."
-        build_swift --product FloralMDQuickLook
+        # The native SwiftPM accessor only searches Bundle.main.bundleURL.
+        # Quick Look resources belong in the standard Contents/Resources
+        # directory, so use Xcode's app-aware resourceURL accessor here too.
+        FLORALMD_BUILD_VARIANT="$VARIANT" swift build -c "$BUILD_CONFIGURATION" \
+            --build-system xcode --product FloralMDQuickLook 2>&1 | tail -3
     fi
 fi
 
@@ -173,7 +180,7 @@ fi
 if [ "$INCLUDE_QUICK_LOOK" = true ]; then
     echo "Embedding ${QUICK_LOOK_NAME} extension..."
     mkdir -p "${QUICK_LOOK_BUNDLE}/Contents/MacOS" "${QUICK_LOOK_BUNDLE}/Contents/Resources"
-    cp "${BUILD_PRODUCTS_DIR}/${SOURCE_QUICK_LOOK_EXECUTABLE}" \
+    cp "${QUICK_LOOK_BUILD_PRODUCTS_DIR}/${SOURCE_QUICK_LOOK_EXECUTABLE}" \
         "${QUICK_LOOK_BUNDLE}/Contents/MacOS/${QUICK_LOOK_BUNDLE_EXECUTABLE}"
     cp "$QUICK_LOOK_INFO_PLIST" "${QUICK_LOOK_BUNDLE}/Contents/Info.plist"
     # An .appex is a separate bundle and does not reliably inherit the host
@@ -213,6 +220,15 @@ for resource_bundle in "${BUILD_PRODUCTS_DIR}"/*.bundle; do
         cp -R "$resource_bundle" "${BUNDLE}/Contents/Resources/"
     fi
 done
+if [ "$INCLUDE_QUICK_LOOK" = true ]; then
+    QUICK_LOOK_CORE_RESOURCE_BUNDLE="${QUICK_LOOK_BUILD_PRODUCTS_DIR}/${CORE_RESOURCE_BUNDLE_NAME}"
+    if [ ! -d "$QUICK_LOOK_CORE_RESOURCE_BUNDLE" ]; then
+        echo "Error: FloralMDCore resource bundle is missing after the Quick Look build." >&2
+        exit 1
+    fi
+    cp -R "$QUICK_LOOK_CORE_RESOURCE_BUNDLE" \
+        "${QUICK_LOOK_BUNDLE}/Contents/Resources/${CORE_RESOURCE_BUNDLE_NAME}"
+fi
 
 echo "Code signing..."
 if [ "$INCLUDE_SPARKLE" = true ]; then
@@ -333,6 +349,10 @@ if [ "$INCLUDE_QUICK_LOOK" = true ]; then
     ACTUAL_QUICK_LOOK_ICON="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "${QUICK_LOOK_BUNDLE}/Contents/Info.plist")"
     ACTUAL_QUICK_LOOK_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${QUICK_LOOK_BUNDLE}/Contents/Info.plist")"
     ACTUAL_QUICK_LOOK_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${QUICK_LOOK_BUNDLE}/Contents/Info.plist")"
+    QUICK_LOOK_BUNDLE_URL_SELECTORS="$(
+        otool -ov "${QUICK_LOOK_BUNDLE}/Contents/MacOS/${QUICK_LOOK_BUNDLE_EXECUTABLE}" |
+            sed -n '/ bundleURL$/p; / resourceURL$/p'
+    )"
     [ "$ACTUAL_QUICK_LOOK_ID" = "$QUICK_LOOK_BUNDLE_ID" ] || {
         echo "Error: wrong Quick Look bundle identifier." >&2
         exit 1
@@ -349,6 +369,16 @@ if [ "$INCLUDE_QUICK_LOOK" = true ]; then
         echo "Error: Quick Look extension build differs from the host app build." >&2
         exit 1
     }
+    if ! grep -Eq '[[:space:]]resourceURL$' <<< "$QUICK_LOOK_BUNDLE_URL_SELECTORS"; then
+        echo "Error: Quick Look accessor does not use Bundle.main.resourceURL." >&2
+        exit 1
+    fi
+    if ! find \
+        "${QUICK_LOOK_BUNDLE}/Contents/Resources/${CORE_RESOURCE_BUNDLE_NAME}" \
+        -path '*/Syntaxes/*.json' -type f -print -quit 2>/dev/null | grep -q .; then
+        echo "Error: Quick Look extension is missing FloralMDCore syntax resources." >&2
+        exit 1
+    fi
     [ -f "${QUICK_LOOK_BUNDLE}/Contents/Resources/AppIcon.icns" ] || {
         echo "Error: Quick Look extension is missing AppIcon.icns." >&2
         exit 1
