@@ -91,11 +91,12 @@
 - 阅读模式禁用 JavaScript；
 - 对危险 HTML 标签、事件属性和脚本 URL 执行过滤；
 - 外部网页链接交给系统默认浏览器处理；
+- 从 `2026.7.14` 起，官方 Mac 安装包使用 Developer ID 签名并经 Apple 公证，
+  可通过 Gatekeeper 正常安装和启动；
 - 自动更新通过 Sparkle 的签名更新源检查正式版本，也可以从应用菜单手动触发。
 
 ## 当前限制
 
-- 应用尚未使用 Apple Developer ID 签名，首次打开可能出现 Gatekeeper 提示；
 - Git 面板只增加了“提交当前文件”这一条窄操作，并只读展示工作区状态与有限的本地
   提交历史；不提供通用暂存、push、checkout、rebase、merge、冲突处理、diff 或完整
   历史浏览；

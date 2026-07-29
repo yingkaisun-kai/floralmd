@@ -11,6 +11,27 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.7.14] — 2026-07-29
+
+### 中文
+
+#### 变更
+- 从此版本起，官方 Mac 安装包由受保护的 GitHub Actions 使用 Developer ID
+  签名并经 Apple 公证，正常安装不再需要手动绕过 Gatekeeper。
+- 正式版本 tag 会先发布为 GitHub Pre-release；安装验收通过后，同一个 Release
+  原地晋升并将同一份 DMG 加入稳定 Sparkle 更新通道，不会重新构建或替换安装包。
+
+### English
+
+#### Changed
+- Starting with this version, official Mac installers are built by protected
+  GitHub Actions, signed with Developer ID, and notarized by Apple, so normal
+  installation no longer requires bypassing Gatekeeper.
+- A final release tag is first published as a GitHub Pre-release. After
+  installation acceptance, the same Release is promoted in place and the same
+  DMG is added to the stable Sparkle update channel without rebuilding or
+  replacing it.
+
 ## [2026.7.13] — 2026-07-29
 
 ### 中文

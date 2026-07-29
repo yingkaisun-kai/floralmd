@@ -422,20 +422,17 @@ SwiftUI 身份稳定；不能用 `.id(...)` 重建整个页面，否则 macOS �
 Sparkle 的稳定 feed URL 与 EdDSA 公钥内置在 `Info.plist`；私钥只存在
 维护者钥匙串和 GitHub Actions 的
 `FLORALMD_SPARKLE_ED_PRIVATE_KEY` secret 中。公开仓库的孤儿 `feed`
-分支只保存 `appcast.xml`；tag 触发的 release workflow 构建 DMG、生成
-GitHub Release、用私钥签名 DMG，然后把新条目推入 `feed`。根目录不保存
-运行中的 appcast，避免 CI 生成的 feed 提交污染源码快照历史。
+分支只保存 `appcast.xml`。最终 `v<CFBundleShortVersionString>` tag 触发
+`.github/workflows/release.yml`，但第一阶段只创建同 tag 的 GitHub Pre-release，
+不检出或修改 `feed`。无秘密的 `test` job 先完成脚本测试、`swift test` 与
+Production 候选装配；只有它通过后，引用受保护 `production` Environment 的
+`release` job 才能读取证书、公证与 Sparkle Secrets。tag 必须精确匹配
+`Info.plist`，且指向已经进入公开 `main` 历史的源码快照。该 Environment 必须在
+GitHub 侧配置 required reviewer，并允许最终 `v*` tag 和从 `main` 人工触发的晋升；
+workflow 文件本身不能替代账号侧保护。
 
-Developer ID 分发先通过独立的受控预发布入口闭环，不能直接复用上述稳定发布者：
-`.github/workflows/developer-id-prerelease.yml` 只接受与
-`Info.plist` 精确对应的
-`preview-v<CFBundleShortVersionString>-build.<CFBundleVersion>` tag。无秘密的
-`test` job 先完成脚本测试、`swift test` 与 Production 候选装配；只有它通过后，
-引用受保护 `production` Environment 的 `release` job 才能读取证书、公证与 Sparkle
-Secrets。该 Environment 必须在 GitHub 侧配置 required reviewer 和仅允许 preview
-tag 的部署规则；workflow 文件本身不能替代账号侧保护。
-
-预发布 job 从同一 commit 重新构建唯一正式 App，使用 Developer ID Application
+`release` job 从 tag 对应的同一 commit 重新构建唯一正式 App，使用
+Developer ID Application
 identity 按 Sparkle helpers、framework、Quick Look、主 App 的由内到外顺序签名，
 所有可执行代码都要求 hardened runtime、secure timestamp 且不得包含
 `get-task-allow=true`。它先以 ZIP 提交 App 公证并 staple App，再从已 staple 的 App
@@ -443,13 +440,22 @@ identity 按 Sparkle helpers、framework、Quick Look、主 App 的由内到外�
 `codesign`、`stapler validate`、`spctl`、DMG 容器校验和 SHA-256 校验，用既有
 EdDSA 私钥对同一 DMG 生成旁路签名，并核对私钥导出的公钥仍等于 App 内置
 `SUPublicEDKey`。最终 DMG 经 GitHub artifact attestation 后作为 Pre-release 资产
-上传，上传后的服务器 SHA-256 必须与本地最终字节一致。这个 workflow 不检出
-`feed`、不运行 `update-appcast.py`，因此不会进入稳定 Sparkle 更新链。
+上传，上传后的服务器 SHA-256 必须与本地最终字节一致。workflow 的恢复路径只会
+重新下载并验证已经存在的三项资产，不会用重跑产生的新 DMG 覆盖它们。
 
-存在上述配置不等于已经完成 Developer ID 分发：只有受保护 job 的真实
-Developer ID 签名、Apple `Accepted` 公证结果、staple/Gatekeeper 门禁、GitHub
-Pre-release 资产，以及用户从 GitHub 下载后的独立安装手测，才能逐层升级证据状态。
-在这些证据完成前，README 对当前稳定版“临时签名、未公证”的描述仍然成立。
+用户必须从该 Pre-release 下载真实 DMG 并完成独立安装验收。验收通过后，维护者从
+公开 `main` 人工触发 `.github/workflows/promote-release.yml` 并通过同一个
+`production` Environment 审批。晋升 job 重新下载 DMG、SHA-256 与 Sparkle
+签名旁路文件，核对 GitHub 服务器 digest、artifact attestation、Developer ID、
+staple、Gatekeeper、版本、长度和 EdDSA 元数据；它不重建、不重签也不重新上传
+资产。验证通过后，同一个 GitHub Release 原地从 Pre-release 改为正式版，再把
+同一 DMG 的 URL、长度和签名写入孤儿 `feed`。如果 Release 状态已经改变但 feed
+推送失败，重跑晋升只补齐幂等的 appcast 条目。
+
+存在 workflow 配置不等于已经发布：Developer ID 签名、Apple `Accepted` 公证、
+staple/Gatekeeper、Pre-release 资产、用户下载手测、原地晋升和稳定 feed 是逐层
+独立证据。`scripts/release.sh` 只做无秘密的本地候选校验，不创建 tag、Release、
+公证产物或 appcast。
 
 `CHANGELOG.md` 是 GitHub Release 与 Sparkle 更新说明的共同来源。CalVer 版本
 保持 `## [YYYY.MM.PATCH] — YYYY-MM-DD` 边界，版本内固定先写完整的
@@ -463,9 +469,10 @@ HTML，因此四级类别标题不会结束当前版本，只有下一个 `## [�
 `**中文：**现在…` 的闭合星号位于标点与汉字之间，不满足 CommonMark 的
 right-flanking 分隔符条件，GitHub 因而原样显示星号。新结构不再依赖这类行内强调。
 
-普通 CI 与 tag 发布 workflow 都固定使用 `macos-26` runner，并在日志中记录
+普通 CI、tag 发布与晋升 workflow 都固定使用 `macos-26` runner，并在日志中记录
 实际 Xcode 与 Swift 版本。`latest-stable` 只在这个明确的 runner 世代内选择；
-SwiftPM cache 使用 `spm-v3-macos26` 代际，不能复用旧 `macos-14` / Xcode 16
+普通 CI 的 SwiftPM cache 使用 `spm-v3-macos26` 代际，不能复用旧
+`macos-14` / Xcode 16
 产生的构建缓存。runner 和编译器版本不改变 `Package.swift` 声明的 macOS 14
 最低部署目标。
 

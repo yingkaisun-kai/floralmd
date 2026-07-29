@@ -236,25 +236,31 @@ class AppcastTests(unittest.TestCase):
 
 
 class WorkflowConfigurationTests(unittest.TestCase):
-    def test_ci_and_release_use_macos_26_with_isolated_cache(self) -> None:
+    def test_ci_and_release_use_macos_26(self) -> None:
         for workflow in ("ci.yml", "release.yml"):
             text = (ROOT / ".github" / "workflows" / workflow).read_text(
                 encoding="utf-8"
             )
             self.assertIn("runs-on: macos-26", text)
-            self.assertIn("spm-v3-macos26-", text)
             self.assertNotIn("runs-on: macos-14", text)
-
-    def test_release_checksum_uses_portable_asset_name(self) -> None:
-        text = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn(
-            '(cd build && shasum -a 256 "FloralMD-${VERSION}.dmg" '
-            '> "FloralMD-${VERSION}.sha256")',
-            text,
+        self.assertIn("spm-v3-macos26-", ci)
+
+    def test_release_uses_developer_id_final_byte_chain(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
         )
-        self.assertNotIn('shasum -a 256 "$DMG"', text)
+        script = (ROOT / "scripts" / "developer-id-release.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("./scripts/developer-id-release.sh", workflow)
+        self.assertIn(
+            'shasum -a 256 "$(basename "$DMG")" >"$(basename "$CHECKSUM")"',
+            script,
+        )
+        self.assertIn("validate-release-promotion.py files", workflow)
 
     def test_release_notes_use_shared_validated_extractor(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
@@ -263,11 +269,9 @@ class WorkflowConfigurationTests(unittest.TestCase):
         local_release = (ROOT / "scripts" / "release.sh").read_text(
             encoding="utf-8"
         )
-        expected = 'python3 scripts/extract-release-notes.py "$APP_VERSION"'
+        expected = 'python3 scripts/extract-release-notes.py "$VERSION"'
         self.assertIn(expected, workflow)
-        self.assertIn(
-            'python3 scripts/extract-release-notes.py "$VERSION"', local_release
-        )
+        self.assertIn(expected, local_release)
         self.assertNotIn('awk "BEGIN{p=0} /^## \\[', workflow)
         self.assertNotIn('awk "BEGIN{p=0} /^## \\[', local_release)
 

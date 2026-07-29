@@ -72,15 +72,15 @@ FloralMD 围绕这种单文件工作方式设计：强调任意文件打开、�
 ### 安装
 
 从 [Releases](https://github.com/yingkaisun-kai/floralmd/releases/latest) 下载
-`FloralMD.dmg`，打开后将 `FloralMD.app` 拖入“应用程序”文件夹。
+`FloralMD-<版本>.dmg`，打开后将 `FloralMD.app` 拖入“应用程序”文件夹。
 
-如果 macOS 无法验证开发者，请先尝试打开一次 FloralMD，再前往“系统设置 →
-隐私与安全性”，找到被阻止的 FloralMD 并选择“仍要打开”。请只对从本项目官方
-GitHub Release 下载的安装包执行此操作。
+从 `2026.7.14` 起，官方 Release 安装包由受保护的 GitHub Actions 统一构建，
+使用 Apple Developer ID 签名并经过 Apple 公证，可通过 macOS Gatekeeper
+正常安装和启动。如果当前正式版仍被 macOS 报告为无法验证，请不要绕过安全检查；
+请先核对 Release 提供的 SHA-256，并通过项目 Issue 报告。
 
-FloralMD 目前仅使用临时签名，尚未使用 Apple Developer ID 签名或经过 Apple
-公证。正式版使用 FloralMD 专用 EdDSA 密钥和独立发布 feed 提供 Sparkle 更新，
-并包含标准“检查更新…”入口。
+正式版使用 FloralMD 专用 EdDSA 密钥和独立发布 feed 提供 Sparkle 更新，并包含
+标准“检查更新…”入口。
 本地 Debug 构建保持完全隔离，不链接或暴露生产更新器。
 
 ### 本地构建
@@ -176,20 +176,21 @@ excludes cross-platform products that also ship a Mac version. Read the
 
 ### Installation
 
-Download `FloralMD.dmg` from the
+Download `FloralMD-<version>.dmg` from the
 [latest release](https://github.com/yingkaisun-kai/floralmd/releases/latest), open
 it, and drag `FloralMD.app` into Applications.
 
-If macOS cannot verify the developer, try to open FloralMD once, then open
-System Settings → Privacy & Security and choose **Open Anyway** for the blocked
-app. Only do this for an installer downloaded from this project's official
-GitHub Release.
+Starting with `2026.7.14`, official Release installers are built by protected
+GitHub Actions, signed with an Apple Developer ID, and notarized by Apple, so
+they install and launch normally through macOS Gatekeeper. If macOS reports
+that the current stable release cannot be verified, do not bypass the security
+check; verify the SHA-256 supplied with the Release and report the problem in a
+project Issue.
 
-FloralMD currently uses an ad-hoc signature and is not yet signed with an Apple
-Developer ID or notarized by Apple. Production releases use
-Sparkle with a FloralMD-specific EdDSA key and dedicated release feed, including
-the standard **Check for Updates…** command. Local Debug builds remain fully
-isolated and do not link or expose the production updater.
+Production releases use Sparkle with a FloralMD-specific EdDSA key and
+dedicated release feed, including the standard **Check for Updates…** command.
+Local Debug builds remain fully isolated and do not link or expose the
+production updater.
 
 ### Build locally
 

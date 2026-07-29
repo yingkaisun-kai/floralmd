@@ -106,7 +106,7 @@ notarize() {
         --wait \
         --output-format json >"$submission"
     submission_id="$(
-        python3 scripts/validate-developer-id-prerelease.py notary \
+        python3 scripts/validate-developer-id-release.py \
             --submission "$submission" \
             --log <(printf '{"issues": []}') \
             --print-id
@@ -117,7 +117,7 @@ notarize() {
         --issuer "$APPLE_NOTARY_ISSUER_ID" \
         "$log" >/dev/null
     SUMMARY="$(
-        python3 scripts/validate-developer-id-prerelease.py notary \
+        python3 scripts/validate-developer-id-release.py \
             --submission "$submission" \
             --log "$log"
     )"
@@ -202,4 +202,4 @@ HASH_AFTER="$(shasum -a 256 "$DMG" | awk '{print $1}')"
 }
 ./scripts/verify-release-artifact.sh final-dmg "$DMG" "$CHECKSUM"
 
-echo "Developer ID prerelease artifacts are ready."
+echo "Developer ID release artifacts are ready."

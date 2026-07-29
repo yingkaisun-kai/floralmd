@@ -1,0 +1,164 @@
+# Modified from Edmund by Yingkai Sun for FloralMD.
+name: Promote Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Final release tag to promote, for example v2026.7.14
+        required: true
+        type: string
+      confirmation:
+        description: Type PROMOTE to publish the stable Release and Sparkle feed
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: floralmd-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Verify, promote, and publish the stable feed
+    runs-on: macos-26
+    environment: production
+    permissions:
+      contents: write
+      attestations: read
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Require explicit promotion confirmation
+        run: |
+          if [ "$RELEASE_CONFIRMATION" != "PROMOTE" ]; then
+            echo "The confirmation input must be exactly PROMOTE." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Validate tag, source, and version metadata
+        run: |
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Info.plist)"
+          BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Info.plist)"
+          VALIDATE_ARGS=(
+            --version "$VERSION"
+            --tag "$RELEASE_TAG"
+            --build "$BUILD"
+          )
+          if git cat-file -e HEAD^:Info.plist 2>/dev/null; then
+            PREVIOUS_VERSION="$(git show HEAD^:Info.plist | plutil -extract CFBundleShortVersionString raw -o - -)"
+            PREVIOUS_BUILD="$(git show HEAD^:Info.plist | plutil -extract CFBundleVersion raw -o - -)"
+            VALIDATE_ARGS+=(--previous-version "$PREVIOUS_VERSION" --previous-build "$PREVIOUS_BUILD")
+          fi
+          python3 scripts/validate-release-version.py "${VALIDATE_ARGS[@]}"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD origin/main
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+
+      - name: Download and validate the existing Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p promotion
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > promotion/release.json
+          python3 scripts/validate-release-promotion.py metadata \
+            --release promotion/release.json \
+            --tag "$RELEASE_TAG" \
+            --version "$VERSION" \
+            --require-state either
+          gh release download "$RELEASE_TAG" --dir promotion
+          python3 scripts/validate-release-promotion.py files \
+            --release promotion/release.json \
+            --directory promotion \
+            --version "$VERSION" \
+            --github-env "$GITHUB_ENV"
+          ./scripts/verify-release-artifact.sh \
+            final-dmg \
+            "promotion/FloralMD-${VERSION}.dmg" \
+            "promotion/FloralMD-${VERSION}.sha256"
+          gh attestation verify \
+            "promotion/FloralMD-${VERSION}.dmg" \
+            --repo "$GITHUB_REPOSITORY"
+
+      - name: Prepare stable release notes
+        run: |
+          python3 scripts/extract-release-notes.py "$VERSION" > release-notes.md
+          test -s release-notes.md
+          python3 scripts/changelog-to-html.py "$VERSION" > sparkle-release-notes.html
+
+      - name: Promote the same GitHub Release in place
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_ID="$(
+            python3 -c 'import json; print(json.load(open("promotion/release.json"))["id"])'
+          )"
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -F prerelease=false \
+            -f make_latest=true \
+            -f name="FloralMD ${VERSION}" \
+            > promotion/promoted-release.json
+          python3 scripts/validate-release-promotion.py metadata \
+            --release promotion/promoted-release.json \
+            --tag "$RELEASE_TAG" \
+            --version "$VERSION" \
+            --require-state released
+
+      - name: Check out stable Sparkle feed
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: feed
+          path: feed
+
+      - name: Publish the existing DMG to the stable feed
+        run: |
+          if [ ! -f feed/appcast.xml ]; then
+            cp scripts/appcast-template.xml feed/appcast.xml
+          fi
+          ASSET_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/FloralMD-${VERSION}.dmg"
+          python3 scripts/update-appcast.py \
+            --appcast feed/appcast.xml \
+            --version "$VERSION" \
+            --build "$BUILD" \
+            --url "$ASSET_URL" \
+            --signature "$ED_SIGNATURE" \
+            --length "$FILE_LENGTH" \
+            --pub-date "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')" \
+            --description-file sparkle-release-notes.html
+          python3 scripts/validate-release-promotion.py appcast \
+            --appcast feed/appcast.xml \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --version "$VERSION" \
+            --build "$BUILD" \
+            --signature "$ED_SIGNATURE" \
+            --length "$FILE_LENGTH"
+          test "$DMG_SHA256" = "$(
+            shasum -a 256 "promotion/FloralMD-${VERSION}.dmg" | awk '{print $1}'
+          )"
+
+          git -C feed config user.name "github-actions[bot]"
+          git -C feed config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C feed add appcast.xml
+          if git -C feed diff --cached --quiet; then
+            echo "Appcast already contains this release."
+          else
+            git -C feed commit -m "Update appcast for ${RELEASE_TAG}"
+            git -C feed push origin HEAD:feed
+          fi
