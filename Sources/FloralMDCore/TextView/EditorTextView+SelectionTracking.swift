@@ -7,7 +7,6 @@ extension EditorTextView {
 
     @objc func selectionDidChange(_ notification: Notification) {
         traceEdit("selectionDidChange")
-        scheduleFontHeightInsertionIndicatorUpdate()
         // A selection change landing mid-recompose is the drift signature
         // (issue #156); the stack names the AppKit path that moved the caret.
         if isUpdating { traceSelectionOrigin() }
@@ -32,7 +31,12 @@ extension EditorTextView {
             // Capture the flag now — it's reset synchronously after mouseDown
             // returns, before this async block runs.
             let fromMouse = suppressTypewriterCentering
-            DispatchQueue.main.async { [weak self, fromMouse] in
+            // The same is true of the pre-mouseDown viewport anchor. AppKit can
+            // reveal the previous selection while activating a window; taking a
+            // fresh anchor in the async restyle would preserve that already-
+            // jumped viewport instead of the position the user clicked from.
+            let mouseViewportAnchor = fromMouse ? pendingMouseViewportAnchor : nil
+            DispatchQueue.main.async { [weak self, fromMouse, mouseViewportAnchor] in
                 guard let self = self else { return }
                 // Always clear the flag first. If we bail out below (a recompose is
                 // mid-flight and will set the active block itself), leaving it set
@@ -80,18 +84,16 @@ extension EditorTextView {
                 if self.typewriterModeEnabled && !fromMouse {
                     self.recomposeDirty(dirty, cursorInRaw: loc)
                     self.scrollCursorToCenter()
+                } else if let mouseViewportAnchor {
+                    self.restoringViewportAnchor(mouseViewportAnchor) {
+                        self.recomposeDirty(dirty, cursorInRaw: loc)
+                    }
                 } else {
                     self.preservingViewportAnchor {
                         self.recomposeDirty(dirty, cursorInRaw: loc)
                     }
                 }
                 if deferred { self.scheduleProgressiveStyling() }
-                // Cross-block activation can collapse a tall image overlay to
-                // one raw Markdown line after the selection notification's
-                // first indicator measurement. Measure again against the
-                // settled fragment geometry so the explicit blinking caret
-                // cannot remain at the old image baseline.
-                self.scheduleFontHeightInsertionIndicatorUpdate()
             }
             return
         } else if newActiveIndex == activeBlockIndex {

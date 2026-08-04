@@ -100,6 +100,23 @@ struct EditorTextViewListIndentationTests {
         #expect(!editor.rawSource.hasPrefix("  - a"))
     }
 
+    @Test("Tab survives when indenting the final list item merges parser blocks")
+    @MainActor func tabFinalListItemAfterPlainQuote() {
+        let editor = makeEditor()
+        editor.loadContent("> quote\n  - item")
+        #expect(editor.blocks.count == 2)
+
+        editor.setSelectedRange(NSRange(location: 12, length: 0))
+        editor.insertTab(nil)
+
+        #expect(editor.rawSource == "> quote\n    - item")
+        #expect(editor.blocks.count == 1)
+        #expect(editor.blocks[0].kind == .quoteRun(isCallout: false))
+        #expect(editor.blocks[0].isStyled)
+        #expect(editor.textStorage?.string == editor.rawSource)
+        #expect(editor.selectedRange() == NSRange(location: 14, length: 0))
+    }
+
     // MARK: - Shift-Tab Dedent
 
     @Test("Shift-Tab removes up to 2 leading spaces")

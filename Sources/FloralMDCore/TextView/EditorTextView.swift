@@ -177,12 +177,8 @@ public class EditorTextView: NSTextView {
     /// Coalesces the deferred full-document layout settle for small documents
     /// (see EditorTextView+LazyStyling `scheduleFullLayoutSettle`).
     var fullLayoutSettleScheduled = false
-    /// TextKit 2's system caret includes line spacing and bypasses the public
-    /// draw hook. This explicit foreground indicator is positioned and blinked
-    /// by EditorTextView+InsertionPoint while the system caret stays clear.
-    let fontHeightInsertionIndicator = NSTextInsertionIndicator(frame: .zero)
-    var insertionIndicatorUpdateScheduled = false
-    var insertionIndicatorBlinkTimer: Timer?
+    /// TextKit 2 owns the insertion point. Keep caret geometry in AppKit so it
+    /// stays synchronized with the editable line and input system.
     var pointerTrackingArea: NSTrackingArea?
     var hoveredImageOverlay: ImageOverlayHit?
     var imageResizeSession: ImageResizeSession?
@@ -309,6 +305,10 @@ public class EditorTextView: NSTextView {
     /// Clicks position the caret where the user clicked — centering there
     /// would be jarring and is the root cause of the "glitchy" feeling.
     var suppressTypewriterCentering = false
+    /// Captured before `super.mouseDown` lets the deferred active-block restyle
+    /// restore the viewport that existed before AppKit's activation/selection
+    /// machinery had a chance to reveal a stale caret.
+    var pendingMouseViewportAnchor: ViewportAnchorSnapshot?
 
     /// Physical maximum text-column width in points. Windows wider than this
     /// cap get symmetric side margins; narrower windows fill edge-to-edge.
@@ -361,7 +361,7 @@ public class EditorTextView: NSTextView {
 
     var bodyParagraphStyle: NSParagraphStyle {
         let ps = NSMutableParagraphStyle()
-        ps.lineSpacing = theme.lineSpacing
+        ps.lineSpacing = 0
         ps.paragraphSpacingBefore = theme.paragraphSpacingBefore
         ps.paragraphSpacing = 0
         return ps
@@ -372,7 +372,9 @@ public class EditorTextView: NSTextView {
     /// preference) applies the theme live without writing it to defaults.
     public func applyTheme(_ newTheme: EditorTheme, persist: Bool = true) {
         let antialiasChanged = theme.antialias != newTheme.antialias
-        theme = newTheme
+        var normalizedTheme = newTheme
+        normalizedTheme.lineSpacing = 0
+        theme = normalizedTheme
         if persist { theme.save(to: themeDefaults) }
         typingAttributes = baseAttributes
         recomposeAllDirty()
@@ -381,9 +383,7 @@ public class EditorTextView: NSTextView {
         if antialiasChanged, let tlm = textLayoutManager {
             tlm.invalidateLayout(for: tlm.documentRange)
         }
-        insertionPointColor = .clear
-        fontHeightInsertionIndicator.color = accentColor
-        scheduleFontHeightInsertionIndicatorUpdate()
+        insertionPointColor = accentColor
     }
 
     var baseAttributes: [NSAttributedString.Key: Any] {
@@ -433,10 +433,6 @@ public class EditorTextView: NSTextView {
 
         textAntialias = theme.antialias
         backgroundColor = editorBackgroundColor
-        insertionPointColor = .clear
-        fontHeightInsertionIndicator.color = accentColor
-        fontHeightInsertionIndicator.displayMode = .hidden
-        fontHeightInsertionIndicator.automaticModeOptions = []
         imageResizeChromeView.isHidden = true
         codeBlockLanguageOverlayView.editor = self
         codeBlockLanguageOverlayView.frame = bounds
@@ -448,7 +444,6 @@ public class EditorTextView: NSTextView {
         addSubview(codeBlockControlView)
         linkHoverHintView.isHidden = true
         addSubview(linkHoverHintView)
-        addSubview(fontHeightInsertionIndicator)
         selectedTextAttributes = [
             .backgroundColor: selectionHighlightColor,
             .foregroundColor: foregroundColor,
@@ -550,12 +545,9 @@ public class EditorTextView: NSTextView {
         super.viewDidMoveToWindow()
         installScrollPromotionObserver()
         if window == nil {
-            stopFontHeightInsertionIndicator()
             hoveredLinkHit = nil
             hideLinkHoverHint()
             setAccessibilityHelp(nil)
-        } else {
-            scheduleFontHeightInsertionIndicatorUpdate()
         }
     }
 
@@ -565,8 +557,7 @@ public class EditorTextView: NSTextView {
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         backgroundColor = editorBackgroundColor
-        insertionPointColor = .clear
-        fontHeightInsertionIndicator.color = accentColor
+        insertionPointColor = accentColor
         selectedTextAttributes = [
             .backgroundColor: selectionHighlightColor,
             .foregroundColor: foregroundColor,
@@ -575,7 +566,6 @@ public class EditorTextView: NSTextView {
         recomposeAllDirty()
         codeBlockLanguageOverlayView.needsDisplay = true
         codeBlockControlView.needsDisplay = true
-        scheduleFontHeightInsertionIndicatorUpdate()
     }
 
     public override func updateTrackingAreas() {
@@ -641,9 +631,11 @@ public class EditorTextView: NSTextView {
     /// restyle captures `fromMouse=true`. Lets a scripted replay reproduce the
     /// mouse-click branch without synthesizing HID events at screen coordinates.
     public func reproClickSelect(_ offset: Int) {
+        pendingMouseViewportAnchor = captureViewportAnchor()
         suppressTypewriterCentering = true
         setSelectedRange(NSRange(location: min(offset, (rawSource as NSString).length), length: 0))
         suppressTypewriterCentering = false
+        pendingMouseViewportAnchor = nil
     }
     #endif
 
@@ -668,9 +660,11 @@ public class EditorTextView: NSTextView {
             perform(action)
             return
         }
+        pendingMouseViewportAnchor = captureViewportAnchor()
         suppressTypewriterCentering = true
         super.mouseDown(with: event)
         suppressTypewriterCentering = false
+        pendingMouseViewportAnchor = nil
     }
 
     enum LinkNavigationAction: Equatable {
@@ -896,13 +890,11 @@ public class EditorTextView: NSTextView {
         let became = super.becomeFirstResponder()
         if became {
             recoverFromStrandedCompositionIfNeeded()
-            scheduleFontHeightInsertionIndicatorUpdate()
         }
         return became
     }
 
     public override func resignFirstResponder() -> Bool {
-        stopFontHeightInsertionIndicator()
         return super.resignFirstResponder()
     }
 
@@ -918,7 +910,6 @@ public class EditorTextView: NSTextView {
                             selectedRange: selectedRange,
                             replacementRange: replacementRange)
         traceEdit("setMarkedText selected=\(selectedRange) replacement=\(replacementRange)")
-        scheduleFontHeightInsertionIndicatorUpdate()
         if wasComposing, !hasMarkedText() {
             textInputDidEndComposition?()
         }
@@ -927,7 +918,6 @@ public class EditorTextView: NSTextView {
     public override func unmarkText() {
         super.unmarkText()
         traceEdit("unmarkText")
-        scheduleFontHeightInsertionIndicatorUpdate()
         textInputDidEndComposition?()
     }
 

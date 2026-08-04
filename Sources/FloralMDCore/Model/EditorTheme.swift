@@ -77,7 +77,7 @@ public struct EditorTheme: Equatable, Sendable {
         fontSize: 16,
         linkBlueHex: "#3366E6",
         codeHex: "#8A2425",
-        lineSpacing: 4,
+        lineSpacing: 0,
         paragraphSpacingBefore: 2
     )
 
@@ -213,9 +213,10 @@ public struct EditorTheme: Equatable, Sendable {
         let codeHex = d.string(forKey: Keys.codeHex) ?? def.codeHex
         let mathOperatorHex = d.string(forKey: Keys.mathOperatorHex) ?? def.mathOperatorHex
         let mathNumberHex = d.string(forKey: Keys.mathNumberHex) ?? def.mathNumberHex
-        let lineSpacing: CGFloat = d.object(forKey: Keys.lineSpacing) != nil
-            ? CGFloat(d.float(forKey: Keys.lineSpacing))
-            : def.lineSpacing
+        // Editor line spacing is intentionally fixed to the native AppKit
+        // default. Keep the stored key for migration compatibility, but do not
+        // let an old custom value reintroduce the custom-caret problem.
+        let lineSpacing: CGFloat = 0
         let paragraphSpacingBefore: CGFloat = d.object(forKey: Keys.paragraphSpacingBefore) != nil
             ? CGFloat(d.float(forKey: Keys.paragraphSpacingBefore))
             : def.paragraphSpacingBefore

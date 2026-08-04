@@ -270,7 +270,7 @@ struct FontIntegrationTests {
         #expect(savedName == "Courier")
         #expect(savedSize == 14)
         #expect(savedAccent == "#FF0000")
-        #expect(savedSpacing == 8)
+        #expect(savedSpacing == 0)
     }
 
     @Test("Invalid font name falls back to system font")
@@ -309,11 +309,10 @@ struct AppearanceIntegrationTests {
         #expect(editor.backgroundColor == NSColor.textBackgroundColor)
     }
 
-    @Test("Font-height insertion point uses the accent color")
+    @Test("Native insertion point uses the accent color")
     @MainActor func insertionPoint() {
         let editor = makeEditor()
-        #expect(editor.insertionPointColor == .clear)
-        #expect(editor.fontHeightInsertionIndicator.color == editor.accentColor)
+        #expect(editor.insertionPointColor != .clear)
     }
 
     @Test("Body text uses textColor")

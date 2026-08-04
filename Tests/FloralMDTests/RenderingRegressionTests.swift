@@ -340,6 +340,36 @@ struct RenderingRegressionTests {
                 "viewport top must stay pinned when a visible block changes height (Δ=\(after - before))")
     }
 
+    @Test("Mouse activation restores the viewport captured before selection handling")
+    @MainActor func mouseActivationKeepsPreclickViewport() {
+        var doc = ""
+        for i in 0..<35 { doc += "filler paragraph number \(i)\n\n" }
+        doc += "> [!note]\n> callout body one\n> callout body two\n\n"
+        for i in 0..<35 { doc += "trailing paragraph \(i)\n\n" }
+        let (editor, scroll) = windowed(doc)
+        editor.typewriterModeEnabled = false
+        drainAllStyling(editor)
+        ensureFullLayout(editor)
+
+        let callout = editor.blocks.firstIndex {
+            if case .quoteRun = $0.kind { return true }
+            return false
+        }!
+        let target = editor.blocks[callout].range.location + 2
+        let targetY = editor.lineRect(forCharacterAt: target)?.midY ?? 0
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, targetY - 170)))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        editor.textLayoutManager?.textViewportLayoutController.layoutViewport()
+
+        let before = editor.topmostVisibleCharacterOffset()
+        editor.reproClickSelect(target)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+
+        #expect(editor.topmostVisibleCharacterOffset() == before,
+                "mouse activation must restore the pre-click viewport anchor")
+        #expect(editor.rawSource == editor.string)
+    }
+
 }
 
 @Suite("Regression — separator attribute inheritance")

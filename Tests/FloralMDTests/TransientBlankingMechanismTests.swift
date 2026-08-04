@@ -57,6 +57,63 @@ struct TransientBlankingMechanismTests {
                 "active-block restyle spread hidden attributes into body characters")
     }
 
+    @Test("Anchor compensation lays out the destination viewport immediately")
+    @MainActor
+    func anchorCompensationKeepsViewportDrawable() {
+        let editor = makeEditor()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 320),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        let scroll = NSScrollView(frame: window.contentLayoutRect)
+        scroll.documentView = editor
+        window.contentView = scroll
+        window.makeFirstResponder(editor)
+        editor.typewriterModeEnabled = false
+        editor.isVerticallyResizable = true
+        editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                height: CGFloat.greatestFiniteMagnitude)
+        editor.autoresizingMask = [.width]
+
+        var document = ""
+        for index in 0..<100 {
+            document += "Paragraph \(index) with enough text to produce stable layout geometry.\n\n"
+        }
+        editor.loadContent(document)
+        drainAllStyling(editor)
+        ensureFullLayout(editor)
+        editor.sizeToFit()
+        editor.layoutSubtreeIfNeeded()
+
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: editor.frame.height / 2))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        editor.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        guard let anchor = editor.captureViewportAnchor() else {
+            Issue.record("missing viewport anchor before compensation")
+            return
+        }
+
+        editor.restoringViewportAnchor(anchor) {
+            let shifted = NSRect(
+                x: scroll.contentView.bounds.minX,
+                y: scroll.contentView.bounds.minY + 180,
+                width: scroll.contentView.bounds.width,
+                height: scroll.contentView.bounds.height
+            )
+            scroll.contentView.scroll(to: shifted.origin)
+        }
+
+        guard let viewport = editor.textLayoutManager?.textViewportLayoutController.viewportRange,
+              let tlm = editor.textLayoutManager else {
+            Issue.record("missing TextKit 2 viewport after anchor compensation")
+            return
+        }
+        let start = tlm.offset(from: tlm.documentRange.location, to: viewport.location)
+        let end = tlm.offset(from: tlm.documentRange.location, to: viewport.endLocation)
+        #expect(start <= anchor.sourceOffset && anchor.sourceOffset <= end,
+                "restored anchor must be covered by the laid-out viewport")
+    }
+
     @MainActor
     private func fragmentStates(
         in editor: EditorTextView,

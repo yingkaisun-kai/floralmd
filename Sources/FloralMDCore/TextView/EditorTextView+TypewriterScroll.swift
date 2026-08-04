@@ -1,11 +1,25 @@
 // Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 
+struct ViewportAnchorSnapshot {
+    let sourceOffset: Int
+    let screenY: CGFloat
+}
+
 /// Viewport stability: typewriter centering, viewport-top anchoring across
 /// height-changing restyles, and a fragment-based `scrollRangeToVisible` that
 /// avoids AppKit's TextKit 2 scroll-to-range (which kills the process on large
 /// documents). The `typewriterModeEnabled` stored flag lives on the main class.
 extension EditorTextView {
+    static func isEmptyParagraphInsertionOffset(_ offset: Int, in source: String) -> Bool {
+        let utf16 = source as NSString
+        guard offset > 0,
+              offset <= utf16.length,
+              utf16.character(at: offset - 1) == 0x000A
+        else { return false }
+        return offset == utf16.length || utf16.character(at: offset) == 0x000A
+    }
+
 
     /// Current TextKit 2 viewport expressed in raw-source offsets. Storage and
     /// raw source are character-identical, so this is the bridge from live
@@ -78,19 +92,50 @@ extension EditorTextView {
     /// consistent measurement. A mis-measure degrades to no scroll — never a
     /// yank or a jump to the document start.
     func preservingViewportAnchor(_ body: () -> Void) {
-        guard let scrollView = enclosingScrollView else { body(); return }
-        let visible = scrollView.contentView.bounds
-        guard let anchorOffset = topmostVisibleCharacterOffset() else { body(); return }
-        let beforeY = lineRect(forCharacterAt: anchorOffset)?.minY
+        guard let anchor = captureViewportAnchor() else { body(); return }
+        restoringViewportAnchor(anchor, body)
+    }
 
+    /// Captures a source-backed screen position rather than a bare clip-view Y.
+    /// The snapshot can cross an AppKit mouse activation cycle and still restore
+    /// the exact content the user was looking at before selection autoscroll.
+    func captureViewportAnchor() -> ViewportAnchorSnapshot? {
+        guard let scrollView = enclosingScrollView,
+              let anchorOffset = topmostVisibleCharacterOffset(),
+              let line = lineRect(forCharacterAt: anchorOffset) else { return nil }
+        let documentY = line.minY + textContainerOrigin.y
+        return ViewportAnchorSnapshot(
+            sourceOffset: anchorOffset,
+            screenY: documentY - scrollView.contentView.bounds.minY
+        )
+    }
+
+    /// Restores a previously captured content anchor after a height-changing
+    /// restyle. Layout the destination viewport immediately after moving the
+    /// clip view: reflecting the scroller alone can leave TextKit 2 drawing the
+    /// old viewport's fragments, which appears as a persistent blank editor
+    /// until the user scrolls again.
+    func restoringViewportAnchor(_ anchor: ViewportAnchorSnapshot,
+                                 _ body: () -> Void) {
+        guard let scrollView = enclosingScrollView else { body(); return }
         body()
 
-        guard let beforeY, let afterY = lineRect(forCharacterAt: anchorOffset)?.minY else { return }
-        let delta = afterY - beforeY
-        guard abs(delta) > 0.5 else { return }
-        let newY = max(0, visible.origin.y + delta)
-        scrollView.contentView.scroll(to: NSPoint(x: visible.origin.x, y: newY))
-        scrollView.reflectScrolledClipView(scrollView.contentView)
+        let clipView = scrollView.contentView
+        textLayoutManager?.textViewportLayoutController.layoutViewport()
+        guard let line = lineRect(forCharacterAt: anchor.sourceOffset) else { return }
+        let documentY = line.minY + textContainerOrigin.y
+        let proposed = NSRect(
+            x: clipView.bounds.minX,
+            y: documentY - anchor.screenY,
+            width: clipView.bounds.width,
+            height: clipView.bounds.height
+        )
+        let constrained = clipView.constrainBoundsRect(proposed)
+        if abs(constrained.minY - clipView.bounds.minY) > 0.5 {
+            clipView.scroll(to: constrained.origin)
+            scrollView.reflectScrolledClipView(clipView)
+        }
+        textLayoutManager?.textViewportLayoutController.layoutViewport()
     }
 
     /// Runs a restyle (`body`) while keeping the viewport visually stable: in
@@ -289,7 +334,7 @@ extension EditorTextView {
             // preceding line's height: a rendered image can make that line
             // hundreds of points tall and would center the terminal caret far
             // below the actual empty line.
-            let spacing = theme.lineSpacing + theme.paragraphSpacingBefore
+            let spacing = theme.paragraphSpacingBefore
             // Match AppKit's font-leading line box rather than the 19pt short
             // caret height. Consecutive synthetic paragraphs feed this height
             // into the next advance; rounding it up accumulates a visible jump.

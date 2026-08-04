@@ -1,5 +1,5 @@
 // Modified from Edmund by Yingkai Sun for FloralMD.
-// FontSettings — owns the editor fonts, line height, and accent hex, bridges the
+// FontSettings — owns the editor fonts and accent hex, bridges the
 // AppKit font panel, and applies changes to every open document.
 
 import SwiftUI
@@ -8,20 +8,17 @@ import FloralMDCore
 
 // MARK: - Font / theme state
 
-/// Owns the editor's Western/CJK/monospace fonts and line height, bridges the
-/// AppKit font panel, and applies font/line-height changes to open documents
+/// Owns the editor's Western/CJK/monospace fonts, bridges the AppKit font panel,
+/// and applies font changes to open documents
 /// (the genuinely AppKit-bound part of the Appearance pane).
 @MainActor
 final class FontSettings: NSObject, ObservableObject {
     static let defaultStandardSize = EditorTheme.default.fontSize
     static let defaultMonospaceSize = EditorTheme.default.monospaceFontSize
-    static let defaultLineHeight = (EditorTheme.default.fontSize + EditorTheme.default.lineSpacing)
-        / EditorTheme.default.fontSize
 
     @Published var standardFont: NSFont
     @Published var cjkFont: NSFont
     @Published var monospaceFont: NSFont
-    @Published var lineHeight: CGFloat
     @Published var standardLigatures: Bool { didSet { applyLigatures() } }
     @Published var monospaceLigatures: Bool { didSet { applyLigatures() } }
     /// A single editor-wide antialias setting (both font toggles share it).
@@ -43,8 +40,6 @@ final class FontSettings: NSObject, ObservableObject {
         standardLigatures = theme.standardLigatures
         monospaceLigatures = theme.monospaceLigatures
         antialias = theme.antialias
-        let size = theme.bodyFont.pointSize
-        lineHeight = size > 0 ? max(1, min(3, (size + theme.lineSpacing) / size)) : 1
         super.init()
     }
 
@@ -83,11 +78,6 @@ final class FontSettings: NSObject, ObservableObject {
     func setMonospaceSize(_ size: CGFloat) {
         monospaceFont = NSFont(descriptor: monospaceFont.fontDescriptor, size: size) ?? monospaceFont
         applyMonospace()
-    }
-
-    func setLineHeight(_ value: CGFloat) {
-        lineHeight = max(1, min(3, value))
-        applyTheme()
     }
 
     @objc func changeFont(_ sender: NSFontManager) {
@@ -155,7 +145,7 @@ final class FontSettings: NSObject, ObservableObject {
         var updated = theme
         updated.fontName = standardFont.fontName
         updated.fontSize = standardFont.pointSize
-        updated.lineSpacing = max(0, (lineHeight - 1) * standardFont.pointSize)
+        updated.lineSpacing = 0
         theme = updated
         updated.save()
         applyToDocuments(updated)

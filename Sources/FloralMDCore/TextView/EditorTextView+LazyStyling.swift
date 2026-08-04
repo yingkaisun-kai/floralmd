@@ -136,6 +136,12 @@ extension EditorTextView {
                 self.preservingViewportAnchor {
                     tlm.ensureLayout(for: tlm.documentRange)
                 }
+                // TextKit 2 can finish the fragment relayout one run-loop pass
+                // after NSTextView last positioned its insertion point. Refresh
+                // AppKit's native caret only after the final anchored layout so
+                // its vertical frame comes from the same geometry as the glyphs.
+                self.updateInsertionPointStateAndRestartTimer(true)
+                self.needsDisplay = true
             }
         }
     }

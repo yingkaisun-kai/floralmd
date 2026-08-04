@@ -69,6 +69,39 @@ extension EditorTextView {
     /// Near-zero size makes them effectively invisible and zero-width.
     var hiddenFont: NSFont { NSFont.systemFont(ofSize: 0.01) }
 
+    /// A trailing source newline still belongs in storage, but its empty
+    /// paragraph should not add a visible blank line while the caret is in the
+    /// document body. Keep the source newline and restore `baseAttributes`
+    /// when the EOF paragraph becomes active so Return/typing still has a real
+    /// native line to edit.
+    var collapsedTrailingEmptyLineAttributes: [NSAttributedString.Key: Any] {
+        let ps = NSMutableParagraphStyle()
+        ps.lineSpacing = 0
+        ps.minimumLineHeight = 0
+        ps.maximumLineHeight = 0
+        ps.paragraphSpacingBefore = 0
+        ps.paragraphSpacing = 0
+        return [
+            .font: hiddenFont,
+            .foregroundColor: NSColor.clear,
+            .paragraphStyle: ps,
+        ]
+    }
+
+    /// Applies the visual-only EOF-line collapse to an attributed composition.
+    /// Keeping this shared with the test oracle prevents the incremental and
+    /// full-recompose paths from disagreeing about the terminal newline's ink.
+    func applyTrailingEmptyLinePresentation(to attributed: NSMutableAttributedString) {
+        guard !attributed.string.isEmpty,
+              blocks.last?.content.isEmpty == true,
+              blocks.last?.range.location == attributed.length,
+              activeBlockIndex != blocks.count - 1 else { return }
+        let last = attributed.length - 1
+        guard (attributed.string as NSString).character(at: last) == 0x0A else { return }
+        attributed.setAttributes(collapsedTrailingEmptyLineAttributes,
+                                 range: NSRange(location: last, length: 1))
+    }
+
     /// Monospaced font for inline code spans.
     var inlineCodeFont: NSFont { theme.monospaceFont() }
 
@@ -130,7 +163,7 @@ extension EditorTextView {
     /// full body-line height and add symmetric breathing space above and below.
     /// A `.horizontalRule` BlockDecoration draws the hairline centered in it.
     private func thematicBreakParagraphStyle() -> NSParagraphStyle {
-        let lineHeight = bodyFont.pointSize + theme.lineSpacing
+        let lineHeight = bodyFont.pointSize
 
         let ps = NSMutableParagraphStyle()
         // Force a real line height despite the hidden (0.01pt) dashes.
@@ -153,7 +186,7 @@ extension EditorTextView {
     /// center-drawn rule looks too close to the line above; this nudge brings
     /// it down to the optical midpoint between the surrounding text. Tuned
     /// against rendered output (see RenderingRegressionTests / screencapture).
-    var thematicBreakCenterOffset: CGFloat { bodyFont.pointSize * 0.3 }
+    var thematicBreakCenterOffset: CGFloat { bodyFont.pointSize * 0.08 }
 
     /// Width of the `> ` quote marker in body text. Used as the hanging indent
     /// for blockquotes and callouts so wrapped/continuation lines align after
@@ -841,7 +874,7 @@ extension EditorTextView {
     func sourceStyled(_ markdown: String) -> NSAttributedString {
         let mono = theme.monospaceFont(ofSize: bodyFont.pointSize)
         let ps = NSMutableParagraphStyle()
-        ps.lineSpacing = theme.lineSpacing
+        ps.lineSpacing = 0
         return NSAttributedString(string: markdown, attributes: [
             .font: mono,
             .foregroundColor: foregroundColor,
@@ -852,7 +885,7 @@ extension EditorTextView {
     private func metadataStyled(_ markdown: String, hidden: Bool) -> NSAttributedString {
         let mono = theme.monospaceFont(ofSize: bodyFont.pointSize)
         let ps = NSMutableParagraphStyle()
-        ps.lineSpacing = theme.lineSpacing
+        ps.lineSpacing = 0
         return NSAttributedString(string: markdown, attributes: [
             .font: hidden ? hiddenFont : mono,
             .foregroundColor: hidden ? NSColor.clear : syntaxDimColor,
@@ -934,6 +967,7 @@ extension EditorTextView {
         if after < nsStr.length, nsStr.character(at: after) == 0x0A {
             ts.setAttributes(baseAttributes, range: NSRange(location: after, length: 1))
         }
+        applyTrailingEmptyLinePresentation(to: ts)
         for marker in gitMarkerRanges {
             ts.addAttribute(marker.key, value: marker.value, range: marker.range)
         }

@@ -25,9 +25,8 @@ import FloralMDCore
 ///   assertmarked <bool> assert whether the editor has marked text
 ///   assertrawlen <n>  assert synchronized source UTF-16 length
 ///   assertdocs <n>    assert the live NSDocumentController document count
-///   assertindicator   assert the explicit short caret matches logical caret x
 ///   assertcentered    assert the logical caret is at the typewriter target
-///   loginput          log marked/selection/indicator/viewport geometry
+///   loginput          log marked/selection/viewport geometry
 ///   close / quit      exercise NSDocument close or app termination review
 ///   scroll <y>        scroll the clip view to y (bypasses the caret/typewriter
 ///                     recentering, so a block can be driven off-screen)
@@ -235,17 +234,6 @@ enum ReproScript {
                     let want = Int(arg) ?? -1
                     Log.info("repro assertdocs \(actual == want ? "PASS" : "FAIL") " +
                              "actual=\(actual) want=\(want)", category: .app)
-                }
-            case "assertindicator":
-                schedule(after: delay) { editor in
-                    let delta = editor.reproInsertionIndicatorDelta()
-                    let ok = delta.map { abs($0) <= 1 } == true
-                    let deltaDescription = delta.map { String(describing: $0) } ?? "nil"
-                    let result = ok ? "PASS" : "FAIL"
-                    Log.info("repro assertindicator \(result) "
-                             + "delta=\(deltaDescription) "
-                             + editor.reproInputGeometryState,
-                             category: .app)
                 }
             case "assertcentered":
                 schedule(after: delay) { editor in

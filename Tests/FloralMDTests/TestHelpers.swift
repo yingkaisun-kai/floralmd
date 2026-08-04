@@ -203,6 +203,7 @@ func expectedFullComposition(for editor: EditorTextView) -> NSAttributedString {
             composed.setAttributes(attrs, range: tsRange)
         }
     }
+    editor.applyTrailingEmptyLinePresentation(to: composed)
     return composed
 }
 

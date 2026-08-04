@@ -107,12 +107,14 @@ extension EditorTextView {
         let newRawEnd = rawEnd + indentLen * (endBlock - startBlock + 1)
 
         blocks = BlockParser.parse(rawSource, previous: blocks, features: markdownFeatures)
+        let newRange = NSRange(location: oldRange.location,
+                               length: (newText as NSString).length)
 
         let selInRaw = sel.length > 0
             ? NSRange(location: newRawStart, length: newRawEnd - newRawStart) : nil
         stabilizingViewport {
             recomposeReplacing(oldRange: oldRange, with: newText,
-                               dirty: indentDirtySet(startBlock, endBlock,
+                               dirty: indentDirtySet(for: newRange,
                                                      unitChanged: listIndentUnit != oldIndentUnit),
                                cursorInRaw: newRawStart, selectionInRaw: selInRaw)
         }
@@ -127,9 +129,16 @@ extension EditorTextView {
     /// Blocks to restyle for an indent/dedent: the directly-edited span, plus —
     /// when the document-global list indent unit moved — every list block,
     /// whose rendered indentation is derived from that unit.
-    private func indentDirtySet(_ startBlock: Int, _ endBlock: Int,
-                                unitChanged: Bool) -> IndexSet {
-        var dirty = IndexSet(integersIn: startBlock...min(endBlock, blocks.count - 1))
+    private func indentDirtySet(for editedRange: NSRange, unitChanged: Bool) -> IndexSet {
+        // CommonMark structure can change when indentation changes. For
+        // example, a deeply indented list item after a plain quote becomes
+        // part of that quote, so the post-edit block indices no longer match
+        // the pre-edit indices. Derive the dirty blocks from the new ranges.
+        var dirty = IndexSet()
+        for (index, block) in blocks.enumerated()
+            where NSIntersectionRange(block.range, editedRange).length > 0 {
+            dirty.insert(index)
+        }
         if unitChanged {
             for (i, block) in blocks.enumerated() where block.kind == .listItem {
                 dirty.insert(i)
@@ -205,12 +214,14 @@ extension EditorTextView {
         let newRawEnd = endBlockNewStart + max(0, endOff - removed[endBlock])
 
         blocks = BlockParser.parse(rawSource, previous: blocks, features: markdownFeatures)
+        let newRange = NSRange(location: oldRange.location,
+                               length: (newText as NSString).length)
 
         let selInRaw = sel.length > 0
             ? NSRange(location: newRawStart, length: max(0, newRawEnd - newRawStart)) : nil
         stabilizingViewport {
             recomposeReplacing(oldRange: oldRange, with: newText,
-                               dirty: indentDirtySet(startBlock, endBlock,
+                               dirty: indentDirtySet(for: newRange,
                                                      unitChanged: listIndentUnit != oldIndentUnit),
                                cursorInRaw: newRawStart, selectionInRaw: selInRaw)
         }

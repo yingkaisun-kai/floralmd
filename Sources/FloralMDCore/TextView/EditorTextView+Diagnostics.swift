@@ -20,98 +20,20 @@ import AppKit
 extension EditorTextView {
 
     #if DEBUG
-    /// Live-repro oracle for the explicit short caret. This intentionally reads
-    /// the current overlay without refreshing it, so a stale IME update remains
-    /// observable instead of being healed by the diagnostic itself.
-    public func reproInsertionIndicatorDelta() -> CGFloat? {
-        guard let expected = reproLiveStorageInsertionPointFrame() else { return nil }
-        return fontHeightInsertionIndicator.frame.midX - expected.midX
-    }
-
-    /// Independent IME oracle: unlike the production short-caret helper on the
-    /// baseline build, this measures against live storage, whose extra marked
-    /// characters are legitimate until commit.
-    private func reproLiveStorageInsertionPointFrame() -> CGRect? {
-        let marked = markedRange()
-        let selection = selectedRange()
-        if marked.location != NSNotFound,
-           selection.location >= marked.location,
-           selection.location <= NSMaxRange(marked),
-           let tlm = textLayoutManager,
-           let storage = textStorage,
-           let startLocation = tlm.location(tlm.documentRange.location,
-                                            offsetBy: marked.location) {
-            tlm.ensureLayout(for: NSTextRange(location: startLocation))
-            if let fragment = tlm.textLayoutFragment(for: startLocation),
-               let paragraphStart = fragment.textElement?.elementRange?.location {
-                let offsetInParagraph = tlm.offset(from: paragraphStart, to: startLocation)
-                let line = fragment.textLineFragments.first {
-                    offsetInParagraph >= $0.characterRange.location
-                        && offsetInParagraph <= NSMaxRange($0.characterRange)
-                } ?? fragment.textLineFragments.last
-                if let line {
-                    let prefixRange = NSRange(location: marked.location,
-                                              length: selection.location - marked.location)
-                    let prefixWidth = storage.attributedSubstring(from: prefixRange).size().width
-                    let frame = fragment.layoutFragmentFrame
-                    let startX = textContainerOrigin.x + frame.minX + line.typographicBounds.minX
-                        + line.locationForCharacter(at: offsetInParagraph).x
-                    return CGRect(x: startX + prefixWidth, y: frame.minY,
-                                  width: 2, height: line.typographicBounds.height)
-                }
-            }
-        }
-        if let window {
-            var actual = NSRange()
-            let screen = firstRect(forCharacterRange: selectedRange(), actualRange: &actual)
-            if !screen.isEmpty {
-                return convert(window.convertFromScreen(screen), from: nil)
-            }
-        }
-        guard let tlm = textLayoutManager, let storage = textStorage else { return nil }
-        let offset = min(max(0, selectedRange().location), storage.length)
-        guard let location = tlm.location(tlm.documentRange.location, offsetBy: offset)
-        else { return nil }
-        tlm.ensureLayout(for: NSTextRange(location: location))
-        guard let fragment = tlm.textLayoutFragment(for: location),
-              let paragraphStart = fragment.textElement?.elementRange?.location
-        else { return nil }
-        let offsetInParagraph = tlm.offset(from: paragraphStart, to: location)
-        let line = fragment.textLineFragments.first {
-            offsetInParagraph >= $0.characterRange.location
-                && offsetInParagraph <= NSMaxRange($0.characterRange)
-        } ?? fragment.textLineFragments.last
-        guard let line else { return nil }
-        let frame = fragment.layoutFragmentFrame
-        let x = textContainerOrigin.x + frame.minX + line.typographicBounds.minX
-            + line.locationForCharacter(at: offsetInParagraph).x
-        return CGRect(x: x, y: frame.minY, width: 2, height: line.typographicBounds.height)
-    }
-
     /// Distance from the current logical caret line to the typewriter target.
-    /// The explicit short-caret geometry includes the terminal-empty-line
-    /// fallback, making it a useful oracle when TextKit 2 has no fragment.
     public func reproTypewriterCenterDelta() -> CGFloat? {
         guard let scrollView = enclosingScrollView,
-              let caret = currentFontHeightInsertionPointFrame() else { return nil }
+              let caret = lineRect(forCharacterAt: selectedRange().location) else { return nil }
         return caret.midY - scrollView.contentView.bounds.midY
     }
 
     public var reproInputGeometryState: String {
         let marked = markedRange()
-        let indicatorDelta = reproInsertionIndicatorDelta()
         let centerDelta = reproTypewriterCenterDelta()
-        let indicatorDeltaDescription = indicatorDelta.map { String(describing: $0) } ?? "nil"
         let centerDeltaDescription = centerDelta.map { String(describing: $0) } ?? "nil"
         let viewport = enclosingScrollView?.contentView.bounds ?? .zero
         let emptyParagraph = reproEmptyParagraphGeometryState
         return "\(diagnosticState) "
-            + "indicator={\(fontHeightInsertionIndicator.frame.minX),"
-            + "\(fontHeightInsertionIndicator.frame.minY),"
-            + "\(fontHeightInsertionIndicator.frame.width),"
-            + "\(fontHeightInsertionIndicator.frame.height)} "
-            + "indicatorMode=\(String(describing: fontHeightInsertionIndicator.displayMode)) "
-            + "indicatorDelta=\(indicatorDeltaDescription) "
             + "centerDelta=\(centerDeltaDescription) "
             + "viewFrame={\(frame.minY),\(frame.height)} "
             + "viewport={\(viewport.minY),\(viewport.height)} "
@@ -119,9 +41,8 @@ extension EditorTextView {
             + emptyParagraph
     }
 
-    /// Distinguishes the three quantities that coincide only after an empty
-    /// paragraph has real content: the synthetic line, the explicit
-    /// insertion indicator, and TextKit 2's fragment/line at the selection.
+    /// Reports the logical empty-paragraph line geometry and its TextKit 2
+    /// fragment/line counterpart.
     public var reproEmptyParagraphGeometryState: String {
         func rect(_ value: CGRect?) -> String {
             guard let value else { return "nil" }
@@ -130,7 +51,6 @@ extension EditorTextView {
 
         let offset = min(max(0, selectedRange().location), textStorage?.length ?? 0)
         let synthetic = lineRect(forCharacterAt: offset)
-        let computedIndicator = currentFontHeightInsertionPointFrame()
         var fragmentFrame: CGRect?
         var lineFrame: CGRect?
         var elementRange = "nil"
@@ -161,8 +81,6 @@ extension EditorTextView {
         }
         return "emptyParagraphGeometry offset=\(offset) "
             + "synthetic=\(rect(synthetic)) "
-            + "computedIndicator=\(rect(computedIndicator)) "
-            + "drawnIndicator=\(rect(fontHeightInsertionIndicator.frame)) "
             + "fragment=\(rect(fragmentFrame)) line=\(rect(lineFrame)) "
             + "elementRange=\(elementRange)"
     }

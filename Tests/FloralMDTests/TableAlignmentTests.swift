@@ -228,7 +228,7 @@ struct TableAlignmentRenderTests {
         #expect(!bottomBorder)
     }
 
-    @Test("Multiline cells inherit the user's line spacing")
+    @Test("Multiline cells use the native editor line spacing")
     func cellLineSpacing() {
         var theme = EditorTheme.default
         theme.lineSpacing = 12
@@ -248,7 +248,7 @@ struct TableAlignmentRenderTests {
             Issue.record("expected a rendered cell paragraph style")
             return
         }
-        #expect(paragraph.lineSpacing == 12)
+        #expect(paragraph.lineSpacing == 0)
         #expect(paragraph.paragraphSpacingBefore == 0)
         #expect(paragraph.paragraphSpacing == 0)
     }

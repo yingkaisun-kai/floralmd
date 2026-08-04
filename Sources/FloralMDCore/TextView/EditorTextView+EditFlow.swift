@@ -131,13 +131,6 @@ extension EditorTextView {
             consumePendingDocumentChangeGroupStart() ? .changeDone : nil
         )
         scrollCursorToCenter()
-        // selectionDidChange schedules an update before rawSource, empty-line
-        // geometry, and typewriter scrolling have caught up. If we leave the
-        // visible indicator at that old frame until the next run-loop pass,
-        // Return at EOF briefly draws it one line above the already-centered
-        // viewport (more obvious with large line spacing). The edit is fully
-        // synchronized here, so refresh it before this key event returns.
-        updateFontHeightInsertionIndicator()
     }
 
     /// Publish only after `rawSource`, storage, and blocks agree. The optional

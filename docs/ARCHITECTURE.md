@@ -108,6 +108,14 @@ Markdown 源码
 - `styleBlock(_:cursorPosition:)` 为单个逻辑块生成展示属性；
 - 光标所在块显示原始 Markdown 标记，其他块显示渲染结果；
 - 编辑后只重新解析和渲染受影响的区域，大文档使用延迟样式与视口提升控制开销。
+- Tab / Shift-Tab 重建列表缩进后必须按新源码范围重新定位 dirty blocks，不能沿用
+  编辑前的 block 索引。CommonMark lazy continuation 会让深层列表在普通引用之后
+  归入引用 block；反向操作也可能拆分 block，因此缩进前后的 block 数并不稳定。
+- 鼠标点击切换活动块时，必须在 `super.mouseDown` 之前保存源码驱动的视口锚点，
+  再由异步重组恢复该锚点；否则窗口重新激活时 AppKit 的选区显露会先移动视口，
+  下一轮重组只能保留已经跳动的位置。任何通过 `NSClipView.scroll(to:)` 完成的
+  锚点补偿都必须随后调用 TextKit 2 `layoutViewport()`；只刷新滚动条会让新视口
+  暂时没有可绘制 fragment，表现为正文空白直到用户再次滚动。
 - `NSText.didChangeNotification` 早于 `rawSource` 与块范围同步；依赖行号或
   解析结果的界面（例如 Git gutter）必须监听
   `.editorDidSynchronizeText`，不能直接在系统文本通知中刷新。
@@ -129,10 +137,10 @@ Markdown 源码
 
 `DecoratedTextLayoutFragment` 是 FloralMD 的主要绘制扩展点：
 
-- 原生插入点保持透明，前景短光标由显式 `NSTextInsertionIndicator` 绘制。输入法
-  marked text 尚未提交时，`rawSource` 有意不包含组合串；短光标必须用 TextKit
-  存储中的 marked range 与其内部 selection 计算位置，不能把位置截断到
-  `rawSource.count`，也不能为了刷新光标而同步或重写存储；
+- 插入点由 AppKit 原生绘制。输入法 marked text 尚未提交时，`rawSource` 有意不包含
+  组合串；不能为了刷新光标而同步或重写存储。TextKit 2 完成异步 fragment 重排后，
+  必须调用 `updateInsertionPointStateAndRestartTimer`，否则原生光标可能暂时沿用上一
+  行的旧垂直几何；
 - 光标遇到由换行界定的空段落时（包括文档中间与文末），TextKit 2 可能还没有
   该段自己的 fragment，而把边界位置吸收到上一段 fragment。此时从前一行合成
   空行几何；行进距离必须额外包含用户的
@@ -171,19 +179,18 @@ Markdown 源码
   `updateContentInset()` 必须重新样式化这些宽度敏感块。只修改
   `textContainerInset` 会让 TextKit 2 的表格行停留在不同布局世代，表现为某一行
   的整套边框与单元格一起横向错位。
-- TextKit 2 的系统插入点会包含段落 `lineSpacing`，因此高行距会把光标拉到整行框
-  高度，而且实际的 TextKit 2 路径不会调用 `NSTextView.drawInsertionPoint`。编辑器将
-  系统插入点设为透明，使用前景 `NSTextInsertionIndicator`，显式管理 first responder、
-  选择范围、字体高度与闪烁计时；不能依赖该视图的 `.automatic` 模式自行激活。连续
-  换行产生的空段落可能没有 TextKit 2 fragment，此时从前一空行推导位置并按有效字体
-  缩短，不能退回上一段 fragment 或整行框。
+- 编辑器正文使用 AppKit 的原生行距与原生插入点。不要为压缩光标高度重新引入独立的
+  `NSTextInsertionIndicator` 或手算 caret 坐标：TextKit 2 的 fragment 可能仍在异步布局，
+  独立绘制会让屏幕上的光标与真实 `selectedRange()` 脱离。段落之间的呼吸感继续由
+  `paragraphSpacingBefore` 和具体装饰块负责，而不是用户可调的正文 `lineSpacing`。
 - 文档以换行符结尾时，TextKit 2 会把最终空行吸收到前一个片段；若前一个片段是
   表格末行，其绘制原点会丢失正常首行缩进。`DecoratedTextLayoutFragment` 只对
   这个末行场景补偿单元格内边距，避免文字、竖线和底线整体左移。
+- 文档末尾的源换行必须保留以满足存储与文件往返契约，但当 EOF 空段落不是当前
+  编辑段落时，编辑器将该终止空行的展示属性折叠为零高度；光标进入 EOF 段落后再
+  恢复正常行框，保证末尾输入仍可编辑。
 - 文档不以换行符结尾时，TextKit 2 可能为合法的 EOF 文本位置返回 `nil` fragment；
-  短光标在这个场景借用前一个字符的 fragment 计算同一行的末尾位置，但仍以 EOF
-  location 求横坐标。带末尾换行的空段落继续走独立的 phantom-line fallback，不能
-  混用前一行几何。
+  编辑器应继续让 AppKit 管理 EOF 插入点，不增加旁路的 fragment 坐标推导。
 
 这些展示属性均不改变原始 Markdown 字符串。
 

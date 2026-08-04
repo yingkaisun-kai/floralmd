@@ -11,6 +11,24 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.7.16] — 2026-08-04
+
+### 中文
+
+#### 修复
+- 修复 Markdown 编辑器在切换焦点、重新排版或文档末尾存在空行时，原生光标
+  偶尔显示在上一行的问题。
+- 移除自定义正文行距设置，恢复 AppKit 原生光标和行距布局，保留文件内容与
+  Markdown 行内预览不变。
+
+### English
+
+#### Fixed
+- Fixed the native caret occasionally appearing on the previous line after focus
+  changes, relayout, or a trailing empty line in the document.
+- Removed the custom body line-spacing setting and restored AppKit-native caret
+  and line layout while preserving file contents and inline Markdown preview.
+
 ## [2026.7.15] — 2026-07-29
 
 ### 中文

@@ -1,5 +1,5 @@
 // Modified from Edmund by Yingkai Sun for FloralMD.
-// The Appearance settings pane: appearance mode, fonts, and line height.
+// The Appearance settings pane: appearance mode and fonts.
 // The app accent comes from the AccentColor asset (see Resources/Assets.xcassets),
 // so there is no in-app accent picker — native controls follow the asset / system.
 
@@ -160,26 +160,6 @@ struct AppearanceSettingsView: View {
                         }
                     }
 
-                    Divider()
-
-                    LabeledContent(tr("Line height", "行高")) {
-                        HStack(spacing: 6) {
-                            let lineHeight = Binding(get: { Double(fonts.lineHeight) },
-                                                     set: { fonts.setLineHeight(CGFloat($0)) })
-                            TextField("", value: lineHeight, format: .number.precision(.fractionLength(1)))
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 56)
-                            Stepper("", value: lineHeight, in: 1...3, step: 0.1)
-                                .labelsHidden()
-                            Text(tr("times", "倍"))
-                            SettingsResetButton(
-                                label: tr("Restore default line height", "恢复默认行高"),
-                                isDisabled: abs(fonts.lineHeight - FontSettings.defaultLineHeight) < 0.001
-                            ) {
-                                fonts.setLineHeight(FontSettings.defaultLineHeight)
-                            }
-                        }
-                    }
                 }
             }
         }
