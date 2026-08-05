@@ -122,15 +122,6 @@ extension EditorTextView {
                   category: .selection)
     }
 
-    func updatePendingFocusClickViewportAnchorAfterScroll() {
-        guard pendingFocusClickViewportAnchor != nil,
-              let anchor = captureViewportAnchor()
-        else { return }
-        pendingFocusClickViewportAnchor = anchor
-        Log.trace("viewport focus-anchor updated reason=scroll source=\(anchor.sourceOffset)",
-                  category: .selection)
-    }
-
     static func isEmptyParagraphInsertionOffset(_ offset: Int, in source: String) -> Bool {
         let utf16 = source as NSString
         guard offset > 0,

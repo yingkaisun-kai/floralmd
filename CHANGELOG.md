@@ -27,6 +27,22 @@ categories. Language is never marked with inline bold labels.
 - Preserved the caret and document viewport across focus changes without changing file
   contents, selection, or inline Markdown preview.
 
+## [2026.8.1] — 2026-08-05
+
+### 中文
+
+#### 修复
+- 修复切回编辑器后先滚动、再点击其他位置时，视口被旧焦点恢复锚点再次拉动的问题。
+- 用户主动滚动后会清除一次性焦点恢复锚点，保留正常点击定位和切回时的原位恢复。
+
+### English
+
+#### Fixed
+- Fixed the viewport being pulled a second time by a stale focus-restoration anchor
+  after scrolling and then clicking elsewhere in the editor.
+- Manual scrolling now clears the one-shot focus anchor while preserving normal click
+  placement and focus-return restoration.
+
 ## [2026.7.16] — 2026-08-04
 
 ### 中文

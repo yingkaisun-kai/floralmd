@@ -9,6 +9,22 @@ import AppKit
 @Suite("Scroll stability under height changes")
 struct ScrollStabilityTests {
 
+    @Test("Manual scrolling cancels a pending focus restoration anchor")
+    @MainActor func manualScrollCancelsPendingFocusAnchor() {
+        let editor = makeEditor()
+        editor.pendingFocusClickViewportAnchor = ViewportAnchorSnapshot(
+            sourceOffset: 120,
+            screenY: 48
+        )
+
+        // This is the state transition performed before AppKit handles the
+        // user's scroll event. The following click must use normal click
+        // geometry instead of the old activation snapshot.
+        editor.discardPendingFocusClickViewportAnchor(reason: "scroll")
+
+        #expect(editor.pendingFocusClickViewportAnchor == nil)
+    }
+
     @Test("Callout activation above the viewport doesn't shift visible content")
     @MainActor func activationAboveViewport() {
         let editor = makeEditor()

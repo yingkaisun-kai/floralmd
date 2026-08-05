@@ -681,8 +681,12 @@ public class EditorTextView: NSTextView {
     }
 
     public override func scrollWheel(with event: NSEvent) {
+        // A deliberate scroll means the user has chosen a new viewport. The
+        // activation anchor is only for the first click after focus returns;
+        // carrying it across a scroll makes that later click restore against
+        // stale screen geometry and causes a second, visible lurch.
+        discardPendingFocusClickViewportAnchor(reason: "scroll")
         super.scrollWheel(with: event)
-        updatePendingFocusClickViewportAnchorAfterScroll()
     }
 
     /// Cmd+click on a link's text follows it: a `[[wikilink]]` resolves to a
