@@ -85,7 +85,8 @@ extension EditorTextView {
                     self.recomposeDirty(dirty, cursorInRaw: loc)
                     self.scrollCursorToCenter()
                 } else if let mouseViewportAnchor {
-                    self.restoringViewportAnchor(mouseViewportAnchor) {
+                    self.restoringViewportAnchor(mouseViewportAnchor,
+                                                 traceReason: "mouse-restyle") {
                         self.recomposeDirty(dirty, cursorInRaw: loc)
                     }
                 } else {

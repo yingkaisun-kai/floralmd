@@ -11,6 +11,22 @@ first, with `#### 新增` / `#### 变更` / `#### 修复` categories as needed; 
 complete `### English` block follows, using the corresponding Keep a Changelog
 categories. Language is never marked with inline bold labels.
 
+## [2026.8.0] — 2026-08-05
+
+### 中文
+
+#### 修复
+- 修复应用从后台重新获得焦点时，编辑器视口偶尔跳动或闪烁的问题。
+- 保持光标和文档视口在切换焦点前后的原位，不改变文件内容、选择范围或 Markdown
+  行内预览。
+
+### English
+
+#### Fixed
+- Fixed occasional viewport jumps and flashes when the editor regains focus.
+- Preserved the caret and document viewport across focus changes without changing file
+  contents, selection, or inline Markdown preview.
+
 ## [2026.7.16] — 2026-08-04
 
 ### 中文

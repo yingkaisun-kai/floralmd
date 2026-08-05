@@ -1,6 +1,10 @@
 // Modified from Edmund by Yingkai Sun for FloralMD.
 import AppKit
 
+final class FocusTransitionOverlayView: NSImageView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 struct ViewportAnchorSnapshot {
     let sourceOffset: Int
     let screenY: CGFloat
@@ -11,6 +15,122 @@ struct ViewportAnchorSnapshot {
 /// avoids AppKit's TextKit 2 scroll-to-range (which kills the process on large
 /// documents). The `typewriterModeEnabled` stored flag lives on the main class.
 extension EditorTextView {
+    @objc func applicationWillResignActiveForViewportAnchor(_ notification: Notification) {
+        // Only the editor that actually owns input may seed the next activation
+        // click. Observing every document here is harmless but capturing every
+        // document would revive the stale, app-wide recovery race.
+        let ownsInput = window?.firstResponder === self
+        let ownsKeyWindow = window?.isKeyWindow == true
+        Log.trace("viewport focus-resign event=\(notification.name.rawValue) firstResponder=\(ownsInput ? "Y" : "N") keyWindow=\(ownsKeyWindow ? "Y" : "N")",
+                  category: .selection)
+        guard ownsInput || ownsKeyWindow else { return }
+        removeFocusTransitionOverlay()
+        inactiveApplicationViewportAnchor = captureViewportAnchor()
+        inactiveApplicationViewportSnapshot = captureFocusTransitionSnapshot()
+        pendingFocusClickViewportAnchor = nil
+        if let anchor = inactiveApplicationViewportAnchor {
+            Log.trace("viewport focus-anchor captured event=\(notification.name.rawValue) source=\(anchor.sourceOffset) screenY=\(anchor.screenY)",
+                      category: .selection)
+        }
+    }
+
+    @objc func applicationWillBecomeActiveForFocusOverlay(_ notification: Notification) {
+        guard inactiveApplicationViewportAnchor != nil else { return }
+        installFocusTransitionOverlay()
+    }
+
+    @objc func applicationDidBecomeActiveForViewportAnchor(_ notification: Notification) {
+        guard let anchor = inactiveApplicationViewportAnchor else { return }
+        inactiveApplicationViewportAnchor = nil
+        pendingFocusClickViewportAnchor = anchor
+        // Activation itself can reveal the old selection before the click is
+        // delivered to the text view. Restore here so a title-bar activation
+        // does not leave a visible jump waiting for a later editor mouseDown.
+        restoreViewportAnchor(anchor, reason: "activation-immediate")
+        Log.trace("viewport focus-anchor armed source=\(anchor.sourceOffset)",
+                  category: .selection)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.pendingFocusClickViewportAnchor != nil {
+                self.restoreViewportAnchor(anchor, reason: "activation-settled")
+                Log.trace("viewport focus-anchor activation-settled source=\(anchor.sourceOffset)",
+                          category: .selection)
+            }
+            self.removeFocusTransitionOverlay()
+        }
+    }
+
+    func captureFocusTransitionSnapshot() -> NSImage? {
+        guard let clipView = enclosingScrollView?.contentView,
+              clipView.bounds.width > 0,
+              clipView.bounds.height > 0,
+              let bitmap = clipView.bitmapImageRepForCachingDisplay(in: clipView.bounds)
+        else { return nil }
+        clipView.cacheDisplay(in: clipView.bounds, to: bitmap)
+        let image = NSImage(size: clipView.bounds.size)
+        image.addRepresentation(bitmap)
+        return image
+    }
+
+    func installFocusTransitionOverlay() {
+        guard focusTransitionOverlay == nil,
+              let image = inactiveApplicationViewportSnapshot,
+              let scrollView = enclosingScrollView
+        else { return }
+        let overlay = FocusTransitionOverlayView(frame: scrollView.contentView.frame)
+        overlay.image = image
+        overlay.imageScaling = .scaleAxesIndependently
+        overlay.autoresizingMask = [.width, .height]
+        overlay.setAccessibilityElement(false)
+        scrollView.addSubview(overlay, positioned: .above,
+                              relativeTo: scrollView.contentView)
+        focusTransitionEditorAlpha = alphaValue
+        alphaValue = 0
+        focusTransitionOverlay = overlay
+        Log.trace("viewport focus-overlay installed", category: .selection)
+    }
+
+    func removeFocusTransitionOverlay() {
+        guard let overlay = focusTransitionOverlay else {
+            inactiveApplicationViewportSnapshot = nil
+            return
+        }
+        if let focusTransitionEditorAlpha {
+            alphaValue = focusTransitionEditorAlpha
+        }
+        self.focusTransitionEditorAlpha = nil
+        overlay.removeFromSuperview()
+        focusTransitionOverlay = nil
+        inactiveApplicationViewportSnapshot = nil
+        Log.trace("viewport focus-overlay removed", category: .selection)
+    }
+
+    func consumeFocusClickViewportAnchor() -> ViewportAnchorSnapshot? {
+        let anchor = pendingFocusClickViewportAnchor
+        pendingFocusClickViewportAnchor = nil
+        if let anchor {
+            Log.trace("viewport focus-anchor consumed source=\(anchor.sourceOffset)",
+                      category: .selection)
+        }
+        return anchor
+    }
+
+    func discardPendingFocusClickViewportAnchor(reason: String) {
+        guard pendingFocusClickViewportAnchor != nil else { return }
+        pendingFocusClickViewportAnchor = nil
+        Log.trace("viewport focus-anchor discarded reason=\(reason)",
+                  category: .selection)
+    }
+
+    func updatePendingFocusClickViewportAnchorAfterScroll() {
+        guard pendingFocusClickViewportAnchor != nil,
+              let anchor = captureViewportAnchor()
+        else { return }
+        pendingFocusClickViewportAnchor = anchor
+        Log.trace("viewport focus-anchor updated reason=scroll source=\(anchor.sourceOffset)",
+                  category: .selection)
+    }
+
     static func isEmptyParagraphInsertionOffset(_ offset: Int, in source: String) -> Bool {
         let utf16 = source as NSString
         guard offset > 0,
@@ -116,13 +236,21 @@ extension EditorTextView {
     /// old viewport's fragments, which appears as a persistent blank editor
     /// until the user scrolls again.
     func restoringViewportAnchor(_ anchor: ViewportAnchorSnapshot,
+                                 traceReason: String? = nil,
                                  _ body: () -> Void) {
         guard let scrollView = enclosingScrollView else { body(); return }
+        let beforeY = scrollView.contentView.bounds.minY
         body()
 
         let clipView = scrollView.contentView
         textLayoutManager?.textViewportLayoutController.layoutViewport()
-        guard let line = lineRect(forCharacterAt: anchor.sourceOffset) else { return }
+        guard let line = lineRect(forCharacterAt: anchor.sourceOffset) else {
+            if let traceReason {
+                Log.trace("viewport anchor-restore reason=\(traceReason) source=\(anchor.sourceOffset) result=no-line beforeY=\(beforeY)",
+                          category: .selection)
+            }
+            return
+        }
         let documentY = line.minY + textContainerOrigin.y
         let proposed = NSRect(
             x: clipView.bounds.minX,
@@ -136,6 +264,18 @@ extension EditorTextView {
             scrollView.reflectScrolledClipView(clipView)
         }
         textLayoutManager?.textViewportLayoutController.layoutViewport()
+        if let traceReason {
+            let afterY = clipView.bounds.minY
+            Log.trace("viewport anchor-restore reason=\(traceReason) source=\(anchor.sourceOffset) screenY=\(anchor.screenY) beforeY=\(beforeY) targetY=\(constrained.minY) afterY=\(afterY) delta=\(afterY - beforeY)",
+                      category: .selection)
+        }
+    }
+
+    /// Restore a previously captured source anchor without wrapping a layout
+    /// mutation. Used at the end of `mouseDown`, before WindowServer can present
+    /// AppKit's intermediate auto-revealed selection position.
+    func restoreViewportAnchor(_ anchor: ViewportAnchorSnapshot, reason: String) {
+        restoringViewportAnchor(anchor, traceReason: reason) {}
     }
 
     /// Runs a restyle (`body`) while keeping the viewport visually stable: in

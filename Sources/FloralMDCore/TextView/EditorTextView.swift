@@ -305,6 +305,22 @@ public class EditorTextView: NSTextView {
     /// Clicks position the caret where the user clicked — centering there
     /// would be jarring and is the root cause of the "glitchy" feeling.
     var suppressTypewriterCentering = false
+    /// Source-backed viewport saved while this editor still owns focus, just
+    /// before FloralMD resigns active. Capturing on the matching
+    /// `didBecomeActive` is too late: AppKit may already have revealed the old
+    /// selection and moved the clip view by then.
+    var inactiveApplicationViewportAnchor: ViewportAnchorSnapshot?
+    /// Frozen pixels from the last active viewport. They cover only the brief
+    /// activation-layout transaction, so TextKit's estimated intermediate
+    /// geometry is never presented while the real editor remains interactive.
+    var inactiveApplicationViewportSnapshot: NSImage?
+    var focusTransitionOverlay: FocusTransitionOverlayView?
+    var focusTransitionEditorAlpha: CGFloat?
+    /// Armed when FloralMD becomes active again. Only the next editor click may
+    /// consume it; unlike a focus-wide scroll lock, an unused anchor has no
+    /// effect on later selection or layout callbacks. Explicit keyboard or
+    /// scroll input discards it instead.
+    var pendingFocusClickViewportAnchor: ViewportAnchorSnapshot?
     /// Captured before `super.mouseDown` lets the deferred active-block restyle
     /// restore the viewport that existed before AppKit's activation/selection
     /// machinery had a chance to reveal a stale caret.
@@ -477,6 +493,24 @@ public class EditorTextView: NSTextView {
             name: NSTextView.didChangeSelectionNotification,
             object: self
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationWillResignActiveForViewportAnchor(_:)),
+            name: NSApplication.willResignActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationWillBecomeActiveForFocusOverlay(_:)),
+            name: NSApplication.willBecomeActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationDidBecomeActiveForViewportAnchor(_:)),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
     }
 
     deinit {
@@ -631,13 +665,25 @@ public class EditorTextView: NSTextView {
     /// restyle captures `fromMouse=true`. Lets a scripted replay reproduce the
     /// mouse-click branch without synthesizing HID events at screen coordinates.
     public func reproClickSelect(_ offset: Int) {
-        pendingMouseViewportAnchor = captureViewportAnchor()
+        let anchor = consumeFocusClickViewportAnchor() ?? captureViewportAnchor()
+        pendingMouseViewportAnchor = anchor
         suppressTypewriterCentering = true
         setSelectedRange(NSRange(location: min(offset, (rawSource as NSString).length), length: 0))
         suppressTypewriterCentering = false
+        if let anchor { restoreViewportAnchor(anchor, reason: "repro-click") }
         pendingMouseViewportAnchor = nil
     }
     #endif
+
+    public override func keyDown(with event: NSEvent) {
+        discardPendingFocusClickViewportAnchor(reason: "keyboard")
+        super.keyDown(with: event)
+    }
+
+    public override func scrollWheel(with event: NSEvent) {
+        super.scrollWheel(with: event)
+        updatePendingFocusClickViewportAnchorAfterScroll()
+    }
 
     /// Cmd+click on a link's text follows it: a `[[wikilink]]` resolves to a
     /// file / heading, a regular link opens its URL. Any other click edits.
@@ -660,10 +706,16 @@ public class EditorTextView: NSTextView {
             perform(action)
             return
         }
-        pendingMouseViewportAnchor = captureViewportAnchor()
+        // The activation click is one transaction: use the viewport captured
+        // before FloralMD resigned active, let AppKit place/reveal the caret,
+        // then restore the anchor before this event returns. The async
+        // active-block restyle captures the same anchor and preserves it again.
+        let anchor = consumeFocusClickViewportAnchor() ?? captureViewportAnchor()
+        pendingMouseViewportAnchor = anchor
         suppressTypewriterCentering = true
         super.mouseDown(with: event)
         suppressTypewriterCentering = false
+        if let anchor { restoreViewportAnchor(anchor, reason: "mouse-down") }
         pendingMouseViewportAnchor = nil
     }
 

@@ -370,6 +370,85 @@ struct RenderingRegressionTests {
         #expect(editor.rawSource == editor.string)
     }
 
+    @Test("Focus-return click uses the viewport from before app deactivation")
+    @MainActor func focusReturnClickKeepsPredeactivationViewport() {
+        var doc = ""
+        for i in 0..<90 {
+            doc += "paragraph number \(i) with enough text for stable geometry\n\n"
+        }
+        let (editor, scroll) = windowed(doc)
+        drainAllStyling(editor)
+        ensureFullLayout(editor)
+
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: editor.frame.height * 0.62))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        editor.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        guard let before = editor.captureViewportAnchor() else {
+            Issue.record("missing viewport anchor before app deactivation")
+            return
+        }
+
+        editor.applicationWillResignActiveForViewportAnchor(
+            Notification(name: NSApplication.willResignActiveNotification)
+        )
+        editor.inactiveApplicationViewportSnapshot = NSImage(size: scroll.contentView.bounds.size)
+        let originalAlpha = editor.alphaValue
+        editor.applicationWillBecomeActiveForFocusOverlay(
+            Notification(name: NSApplication.willBecomeActiveNotification)
+        )
+        #expect(editor.focusTransitionOverlay != nil)
+        #expect(editor.focusTransitionOverlay?.hitTest(.zero) == nil,
+                "focus overlay must not intercept the activation click")
+        #expect(editor.alphaValue == 0,
+                "live TextKit drawing must stay hidden behind the frozen viewport")
+
+        // Reproduce the important ordering from the live bug: AppKit changes
+        // the clip origin during activation, before NSTextView receives the
+        // click-through mouseDown. A mouseDown-time capture is therefore late.
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.minY - 260))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        editor.applicationDidBecomeActiveForViewportAnchor(
+            Notification(name: NSApplication.didBecomeActiveNotification)
+        )
+        guard let reactivated = editor.captureViewportAnchor() else {
+            Issue.record("missing viewport anchor after application activation")
+            return
+        }
+        #expect(reactivated.sourceOffset == before.sourceOffset)
+        #expect(abs(reactivated.screenY - before.screenY) < 2,
+                "application activation must restore before the editor click")
+        editor.removeFocusTransitionOverlay()
+        #expect(editor.focusTransitionOverlay == nil)
+        #expect(editor.alphaValue == originalAlpha,
+                "live editor drawing must return when the overlay transaction ends")
+
+        // A pinned window may become active through its title bar before the
+        // user clicks the editor. The anchor belongs to the next editor click,
+        // not to an arbitrary wall-clock deadline.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+
+        let target = (editor.rawSource as NSString).range(of: "paragraph number 72").location
+        editor.reproClickSelect(target)
+
+        guard let immediate = editor.captureViewportAnchor() else {
+            Issue.record("missing viewport anchor after focus click")
+            return
+        }
+        #expect(immediate.sourceOffset == before.sourceOffset)
+        #expect(abs(immediate.screenY - before.screenY) < 2,
+                "focus click must restore before mouse handling returns")
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+        guard let settled = editor.captureViewportAnchor() else {
+            Issue.record("missing settled viewport anchor after focus click")
+            return
+        }
+        #expect(settled.sourceOffset == before.sourceOffset)
+        #expect(abs(settled.screenY - before.screenY) < 2,
+                "deferred active-block styling must retain the same anchor")
+        #expect(editor.rawSource == editor.string)
+    }
+
 }
 
 @Suite("Regression — separator attribute inheritance")

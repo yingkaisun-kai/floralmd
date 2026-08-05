@@ -111,9 +111,16 @@ Markdown 源码
 - Tab / Shift-Tab 重建列表缩进后必须按新源码范围重新定位 dirty blocks，不能沿用
   编辑前的 block 索引。CommonMark lazy continuation 会让深层列表在普通引用之后
   归入引用 block；反向操作也可能拆分 block，因此缩进前后的 block 数并不稳定。
-- 鼠标点击切换活动块时，必须在 `super.mouseDown` 之前保存源码驱动的视口锚点，
-  再由异步重组恢复该锚点；否则窗口重新激活时 AppKit 的选区显露会先移动视口，
-  下一轮重组只能保留已经跳动的位置。任何通过 `NSClipView.scroll(to:)` 完成的
+- 鼠标点击切换活动块时，普通点击必须在 `super.mouseDown` 前保存源码驱动的视口
+  锚点；应用切回点击则必须使用编辑器仍持有输入焦点、应用即将失活时保存的锚点，
+  因为 `didBecomeActive` 或 `mouseDown` 时 AppKit 可能已经显露旧选区并移动视口。
+  应用激活通知先立即恢复一次，并在下一轮事件循环结算一次，避免标题栏激活与稍后
+  正文点击之间暴露跳动。TextKit 2 可能在两次恢复之间短暂呈现估算片段几何；编辑器
+  因此在 `willBecomeActive` 到结算完成之间显示失焦时缓存的非交互视口快照，并隐藏
+  下方正文绘制，避免把该错误中间帧提交到窗口。随后锚点只由首次正文点击消费（不按
+  墙钟时间过期；主动键盘输入取消它，主动滚动把它更新到新视口）：
+  `super.mouseDown` 返回前立即恢复，异步活动块重组再保留同一锚点；不能用跨多轮
+  selection/layout callback 的全局滚动锁。任何通过 `NSClipView.scroll(to:)` 完成的
   锚点补偿都必须随后调用 TextKit 2 `layoutViewport()`；只刷新滚动条会让新视口
   暂时没有可绘制 fragment，表现为正文空白直到用户再次滚动。
 - `NSText.didChangeNotification` 早于 `rawSource` 与块范围同步；依赖行号或
