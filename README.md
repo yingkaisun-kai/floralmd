@@ -73,6 +73,8 @@ FloralMD 围绕这种单文件工作方式设计：强调任意文件打开、�
 
 从 [Releases](https://github.com/yingkaisun-kai/floralmd/releases/latest) 下载
 `FloralMD-<版本>.dmg`，打开后将 `FloralMD.app` 拖入“应用程序”文件夹。
+如果公司网络禁止下载 DMG，也可以下载同版本的
+`FloralMD-<版本>.zip`，解压后将其中的 `FloralMD.app` 移入“应用程序”文件夹。
 
 从 `2026.7.14` 起，官方 Release 安装包由受保护的 GitHub Actions 统一构建，
 使用 Apple Developer ID 签名并经过 Apple 公证，可通过 macOS Gatekeeper
@@ -179,6 +181,10 @@ excludes cross-platform products that also ship a Mac version. Read the
 Download `FloralMD-<version>.dmg` from the
 [latest release](https://github.com/yingkaisun-kai/floralmd/releases/latest), open
 it, and drag `FloralMD.app` into Applications.
+
+If your company blocks DMG downloads, download the matching
+`FloralMD-<version>.zip` instead, extract it, and move the included
+`FloralMD.app` into Applications.
 
 Starting with `2026.7.14`, official Release installers are built by protected
 GitHub Actions, signed with an Apple Developer ID, and notarized by Apple, so
