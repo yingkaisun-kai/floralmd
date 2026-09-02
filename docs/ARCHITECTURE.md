@@ -457,14 +457,15 @@ identity 按 Sparkle helpers、framework、Quick Look、主 App 的由内到外�
 只创建一次 DMG；DMG 自身签名、公证、staple 后才成为最终字节。随后执行严格
 `codesign`、`stapler validate`、`spctl`、DMG 容器校验和 SHA-256 校验，用既有
 EdDSA 私钥对同一 DMG 生成旁路签名，并核对私钥导出的公钥仍等于 App 内置
-`SUPublicEDKey`。最终 DMG 经 GitHub artifact attestation 后作为 Pre-release 资产
-上传，上传后的服务器 SHA-256 必须与本地最终字节一致。workflow 的恢复路径只会
-重新下载并验证已经存在的三项资产，不会用重跑产生的新 DMG 覆盖它们。
+`SUPublicEDKey`。最终 DMG 与包含已 staple App 的 ZIP 都经 GitHub artifact
+attestation 后作为 Pre-release 资产上传；上传后的服务器 SHA-256 必须与本地最终
+字节一致。workflow 的恢复路径只会重新下载并验证已经存在的四项资产，不会用重跑
+产生的新安装包覆盖它们。
 
 用户必须从该 Pre-release 下载真实 DMG 并完成独立安装验收。验收通过后，维护者从
 公开 `main` 人工触发 `.github/workflows/promote-release.yml` 并通过同一个
-`production` Environment 审批。晋升 job 重新下载 DMG、SHA-256 与 Sparkle
-签名旁路文件，核对 GitHub 服务器 digest、artifact attestation、Developer ID、
+`production` Environment 审批。晋升 job 重新下载 DMG、ZIP、SHA-256 与 Sparkle
+签名旁路文件，核对 GitHub 服务器 digest、ZIP 内含 App、两个 artifact attestation、Developer ID、
 staple、Gatekeeper、版本、长度和 EdDSA 元数据；它不重建、不重签也不重新上传
 资产。验证通过后，同一个 GitHub Release 原地从 Pre-release 改为正式版，再把
 同一 DMG 的 URL、长度和签名写入孤儿 `feed`。如果 Release 状态已经改变但 feed
